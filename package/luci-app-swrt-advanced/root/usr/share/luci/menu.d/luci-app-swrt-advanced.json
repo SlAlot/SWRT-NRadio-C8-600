@@ -2,7 +2,7 @@
 	"admin/system/swrt-uplink": {
 		"title": "SWRT 高级设置",
 		"order": 83,
-		"action": { "type": "view", "path": "system/swrt-advanced" },
+		"action": { "type": "view", "path": "system/swrt-port-settings" },
 		"depends": { "acl": ["luci-app-swrt-advanced"] }
 	},
 	"admin/system/swrt-upgrade": {

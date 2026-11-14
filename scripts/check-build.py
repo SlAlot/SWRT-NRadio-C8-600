@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.6"
+RELEASE = "SWRT-C8-600-1.2.7"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -239,18 +239,22 @@ def check_images(tree, output):
                  "etc/hotplug.d/net/10-swrt-qmi-format"):
         require((rootfs / name).stat().st_mode & 0o111, f"Missing executable: {name}")
     for name in ("usr/share/swrt/ota-public.pem",
-                 "www/luci-static/resources/view/system/swrt-advanced.js",
+                 "www/luci-static/resources/view/system/swrt-port-settings.js",
                  "www/luci-static/resources/view/system/swrt-ota.js"):
         require((rootfs / name).is_file(), f"Missing SWRT Advanced Settings asset: {name}")
     source = ROOT / "package/luci-app-swrt-advanced/root"
-    for name in ("usr/libexec/swrt-upgrade", "usr/share/swrt/ota-public.pem"):
+    for name in ("usr/libexec/swrt-upgrade", "usr/libexec/rpcd/luci.swrt_advanced",
+                 "usr/share/swrt/ota-public.pem", "www/luci-static/resources/view/system/swrt-port-settings.js"):
         require((rootfs / name).read_bytes() == (source / name).read_bytes(),
                 f"Installed OTA component does not match the release source: {name}")
     menu = json.loads((rootfs / "usr/share/luci/menu.d/luci-app-swrt-advanced.json").read_text())
-    require(menu["admin/system/swrt-uplink"]["action"] == {"type": "view", "path": "system/swrt-advanced"}
+    require(menu["admin/system/swrt-uplink"]["action"] == {"type": "view", "path": "system/swrt-port-settings"}
             and menu["admin/system/swrt-upgrade"]["action"] == {"type": "view", "path": "system/swrt-ota"}
             and "admin/network/swrt-uplink" not in menu,
             "SWRT pages must be under System")
+    acl = json.loads((rootfs / "usr/share/rpcd/acl.d/luci-app-swrt-advanced.json").read_text())
+    require("set_port_mode" in acl["luci-app-swrt-advanced"]["write"]["ubus"]["luci.swrt_advanced"],
+            "Fourth-port settings must have write access to the scoped RPC")
     upgrade_view = rootfs / "www/luci-static/resources/view/system/swrt-ota.js"
     require("L.url('admin', 'system', 'swrt-uplink')" in upgrade_view.read_text()
             and not upgrade_view.with_name("swrt-upgrade.js").exists(),

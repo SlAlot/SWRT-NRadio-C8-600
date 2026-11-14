@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-swrt-advanced
-PKG_VERSION:=1.2.5
+PKG_VERSION:=1.2.7
 PKG_RELEASE:=1
 PKG_LICENSE:=AGPL-3.0-only
 PKG_MAINTAINER:=SlAlot

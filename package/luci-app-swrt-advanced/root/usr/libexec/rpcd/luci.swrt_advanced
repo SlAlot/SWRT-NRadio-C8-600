@@ -1,16 +1,22 @@
 #!/bin/sh
 
+port_mode() {
+	uci -q get swrt_uplink.main.port_mode || printf 'wan\n'
+}
+
 uplink_status() {
 	. /lib/functions.sh
 	. /usr/share/qmodem/instance.sh
 	. /lib/functions/swrt-modem.sh
-	local port_role=isolated mode= path_usb carrier ports
+	local port_role=isolated mode= path_usb carrier ports running_mode
 	carrier=$(cat /sys/class/net/wan/carrier 2>/dev/null)
 	if [ -e /sys/class/net/br-lan/brif/wan ]; then
 		port_role=lan
 	elif ubus -t 2 call network.interface.wan status 2>/dev/null | jq -e '.autostart == true' >/dev/null; then
 		port_role=wan
 	fi
+	running_mode=$(ubus -t 2 call service list '{"name":"swrt-uplink"}' 2>/dev/null |
+		jq -r '.["swrt-uplink"].instances.port | select(.running == true) | .command[2] // ""')
 	ports=$(swrt_modem_list | while IFS="$(printf '\t')" read -r section path port alias metric name; do
 		path_usb=false
 		if swrt_modem_usb_up "$section" "$alias"; then path_usb=true; fi
@@ -20,13 +26,43 @@ uplink_status() {
 	elif printf '%s\n' "$ports" | jq -e 'any(.[]; .usb)' >/dev/null; then mode=usb
 	fi
 	jq -nc --arg role "$port_role" --arg carrier "$carrier" --arg mode "$mode" \
-		--argjson modems "$ports" \
-		'{role:$role,carrier:($carrier == "1"),mode:$mode,modems:$modems}'
+		--arg configured "$(port_mode)" --arg active "$running_mode" --argjson modems "$ports" \
+		'{role:$role,carrier:($carrier == "1"),mode:$mode,modems:$modems,
+			port_mode:$configured,running_port_mode:$active}'
 }
 
+port_error() {
+	jq -nc --arg message "$1" '{ok:false,message:$message}'
+}
+
+set_port_mode() (
+	local selected previous staging
+	selected=$(jq -er '.mode | select(. == "auto" or . == "lan" or . == "wan")') ||
+		{ port_error '无效的第四口工作方式。'; return; }
+	exec 9>/var/lock/swrt-port-mode.lock
+	flock -n 9 || { port_error '第四口配置正在应用，请稍后重试。'; return; }
+	previous=$(port_mode)
+	if [ "$previous" != "$selected" ]; then
+		staging=$(mktemp -d) || { port_error '无法创建临时配置。'; return; }
+		trap 'rm -f "$staging/swrt_uplink"; rmdir "$staging"' EXIT
+		if ! uci -q -t "$staging" set "swrt_uplink.main.port_mode=$selected" ||
+		   ! uci -q -t "$staging" commit swrt_uplink; then
+			port_error '无法保存第四口配置。'
+			return
+		fi
+	fi
+	# The mode is committed before procd reads it. Do not apply other LuCI changes.
+	if ! /etc/init.d/swrt-uplink reload >/dev/null 2>&1; then
+		port_error '配置已保存，但第四口服务重载失败，可重试应用。'
+		return
+	fi
+	printf '%s\n' '{"ok":true}'
+)
+
 case "$1:$2" in
-	list:) printf '%s\n' '{"uplink":{},"status":{},"check":{},"download":{},"set_source":{"source":""},"install":{"keep":0,"sha256":""}}' ;;
+	list:) printf '%s\n' '{"uplink":{},"set_port_mode":{"mode":""},"status":{},"check":{},"download":{},"set_source":{"source":""},"install":{"keep":0,"sha256":""}}' ;;
 	call:uplink) uplink_status ;;
+	call:set_port_mode) set_port_mode ;;
 	call:set_source) /usr/libexec/swrt-upgrade set-source; exit 0 ;;
 	call:status|call:check|call:download|call:install) /usr/libexec/swrt-upgrade "$2"; exit 0 ;;
 	esac
