@@ -6,7 +6,7 @@
 
 1. 在 [Releases](https://github.com/SlAlot/SWRT-NRadio-C8-600/releases/latest) 下载 `*-squashfs-sysupgrade.itb` 和 `SHA256SUMS`。核对 SHA256 后，在「系统 → 备份与升级」备份当前配置。
 2. 上传 `sysupgrade.itb` 并确认镜像检查通过。保留配置前，留意旧版 LAN1/LAN3 标签互换对单口 VLAN 的影响。
-3. 安装 1.2.3 后，可在「系统 → SWRT 在线更新」检查后续正式版本。若网络无法直连 GitHub，可以在同一页面切换至国内加速。
+3. 安装 1.2.3 或更新版本后，可在「系统 → SWRT 在线更新」检查后续正式版本。若网络无法直连 GitHub，可以在同一页面切换至国内加速。
 
 ## 首刷或恢复
 

@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.3"
+RELEASE = "SWRT-C8-600-1.2.5"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -248,12 +248,9 @@ def check_images(tree, output):
                 f"Installed OTA component does not match the release source: {name}")
     menu = json.loads((rootfs / "usr/share/luci/menu.d/luci-app-swrt-advanced.json").read_text())
     require(menu["admin/system/swrt-uplink"]["action"] == {"type": "view", "path": "system/swrt-advanced"}
-            and menu["admin/system/swrt-upgrade"]["action"] == {"type": "view", "path": "system/swrt-ota"},
+            and menu["admin/system/swrt-upgrade"]["action"] == {"type": "view", "path": "system/swrt-ota"}
+            and "admin/network/swrt-uplink" not in menu,
             "SWRT pages must be under System")
-    legacy = menu["admin/network/swrt-uplink"]
-    require("title" not in legacy
-            and legacy["action"] == {"type": "alias", "path": "admin/system/swrt-uplink"},
-            "The legacy Advanced Settings URL must be a hidden alias to the System page")
     upgrade_view = rootfs / "www/luci-static/resources/view/system/swrt-ota.js"
     require("L.url('admin', 'system', 'swrt-uplink')" in upgrade_view.read_text()
             and not upgrade_view.with_name("swrt-upgrade.js").exists(),
