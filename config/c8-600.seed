@@ -1,0 +1,52 @@
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_nradio_wt9106=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_IMAGEOPT=y
+CONFIG_PREINITOPT=y
+CONFIG_TARGET_PREINIT_IP="192.168.17.1"
+CONFIG_TARGET_DEFAULT_LAN_IP_FROM_PREINIT=y
+CONFIG_EXTRA_IMAGE_NAME="swrt-c8-600-1.2.1"
+CONFIG_SIGNED_PACKAGES=y
+# CONFIG_FEED_istore is not set
+# CONFIG_FEED_qmodem is not set
+# CONFIG_FEED_video is not set
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-app-qmodem-next=y
+CONFIG_PACKAGE_luci-app-wlmbstart=y
+CONFIG_PACKAGE_luci-app-swrt-advanced=y
+CONFIG_PACKAGE_wlmb-server=y
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_luci-theme-apollo=y
+CONFIG_PACKAGE_luci-app-store=y
+CONFIG_PACKAGE_xz-utils=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-app-mwan3=y
+CONFIG_PACKAGE_mwan3=y
+CONFIG_PACKAGE_iptables-nft=y
+CONFIG_PACKAGE_ip6tables-nft=y
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_flock=y
+CONFIG_PACKAGE_coreutils-timeout=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+CONFIG_PACKAGE_qmodem_INCLUDE_generic-qmi-wwan=y
+CONFIG_PACKAGE_qmodem_USE_TOM_CUSTOMIZED_QUECTEL_CM=y
+CONFIG_PACKAGE_kmod-fs-ext4=m
+CONFIG_PACKAGE_kmod-usb-storage=m
+CONFIG_PACKAGE_kmod-usb-storage-uas=m
+# CONFIG_RUBY_ENABLE_YJIT is not set
+# CONFIG_PACKAGE_qmodem_INCLUDE_vendor-qmi-wwan is not set
+# CONFIG_PACKAGE_qmodem_INCLUDE_ADD_PCI_SUPPORT is not set
+# CONFIG_PACKAGE_qmodem_INCLUDE_ADD_MTK_T7XX_SUPPORT is not set
+# CONFIG_PACKAGE_dnsmasq is not set
+# CONFIG_PACKAGE_opkg is not set

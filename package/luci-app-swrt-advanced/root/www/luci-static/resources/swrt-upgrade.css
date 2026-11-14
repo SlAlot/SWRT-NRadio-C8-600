@@ -1,0 +1,24 @@
+#swrt-upgrade .swrt-main-grid>.np-native-card>.np-native-card-body{display:flex;flex-direction:column}
+#swrt-upgrade .swrt-main-grid .np-actions:last-child{margin-top:auto}
+#swrt-upgrade .swrt-file{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+#swrt-upgrade .swrt-file span,#swrt-upgrade code{overflow-wrap:anywhere;white-space:normal}
+#swrt-upgrade code{font-size:11px;background:var(--np-soft);color:var(--np-muted);padding:8px;border-radius:8px}
+#swrt-upgrade .swrt-keep{display:flex;align-items:center;gap:8px;min-height:24px;margin:0;color:var(--np-text);cursor:pointer;font-weight:400}
+#swrt-upgrade .swrt-keep span{display:block;line-height:24px}
+#swrt-upgrade .swrt-keep-group{display:grid;gap:6px}
+#swrt-upgrade input[type=checkbox]{display:block;position:static;inset:auto;transform:none;width:18px!important;height:18px!important;accent-color:var(--np-accent);margin:0!important;flex:0 0 18px;align-self:center;vertical-align:middle}
+#swrt-upgrade progress{flex-basis:100%;width:100%;height:8px;accent-color:var(--np-accent)}
+#swrt-upgrade [data-phase=failed]{color:var(--np-danger)}
+#swrt-upgrade [data-phase=ready]{color:var(--np-green)}
+#swrt-upgrade .swrt-release-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font:inherit;font-size:13px;line-height:1.8;border:0;padding:0;margin:0;background:none;color:var(--np-muted)}
+.swrt-confirm-backup{display:block;margin:20px 0;line-height:1.8}
+.swrt-upgrade-confirm .swrt-confirm-file{overflow-wrap:anywhere}
+.swrt-upgrade-confirm p{margin-bottom:14px;line-height:1.7}
+.swrt-upgrade-confirm .np-actions{margin-top:18px}
+.swrt-upgrade-confirm h4{box-shadow:none;border-radius:0}
+.swrt-upgrade-confirm input[type=checkbox]{position:static;inset:auto;transform:none;margin:0 8px 0 0!important;vertical-align:middle}
+@media(max-width:760px){#swrt-upgrade .swrt-file{grid-template-columns:minmax(0,1fr)}#swrt-upgrade .np-actions>.np-btn{flex:1;min-width:0}}
+#swrt-upgrade .swrt-source-bar{display:grid;grid-template-columns:auto minmax(220px,320px) minmax(0,1fr);gap:10px 16px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--np-line)}
+#swrt-upgrade .swrt-source-bar>label{margin:0;font-size:13px;color:var(--np-text);white-space:nowrap}
+#swrt-upgrade .swrt-source-bar select{width:100%;min-width:0;margin:0}
+@media(max-width:760px){#swrt-upgrade .swrt-source-bar{grid-template-columns:minmax(0,1fr);padding:16px;gap:8px}}

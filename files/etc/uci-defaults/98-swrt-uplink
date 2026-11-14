@@ -1,0 +1,43 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+[ "$(board_name)" = nradio,wt9106 ] || exit 0
+
+uci -q batch <<'EOF' || exit 1
+set network.cpephy=interface
+set network.cpephy.proto='dhcp'
+set network.cpephy.device='cpe'
+set network.cpephy.auto='0'
+set network.cpephy.metric='5'
+set network.cpephy6=interface
+set network.cpephy6.proto='dhcpv6'
+set network.cpephy6.device='@cpephy'
+set network.cpephy6.auto='0'
+set network.cpephy6.metric='5'
+EOF
+
+if [ "$(uci -q get swrt_uplink.main.port_mode)" = wan ]; then
+	uci -q delete network.wan.auto
+	uci -q delete network.wan6.auto
+else
+	uci set network.wan.auto=0 || exit 1
+	if uci -q get network.wan6 >/dev/null; then
+		uci set network.wan6.auto=0 || exit 1
+	fi
+fi
+uci commit network || exit 1
+
+add_cellular_zone() {
+	local zone
+	config_get zone "$1" name
+	[ "$zone" = wan ] || return 0
+	uci -q del_list "firewall.$1.network=cpephy"
+	uci -q del_list "firewall.$1.network=cpephy6"
+	uci add_list "firewall.$1.network=cpephy" &&
+		uci add_list "firewall.$1.network=cpephy6"
+}
+
+config_load firewall
+config_foreach add_cellular_zone zone
+uci commit firewall

@@ -1,0 +1,15 @@
+#!/bin/sh
+
+uci -q batch <<'EOF'
+set system.@system[0].hostname='S-C8-600'
+set system.@system[0].timezone='CST-8'
+set system.@system[0].zonename='Asia/Shanghai'
+set network.wan.metric='30'
+set network.wan6.metric='30'
+set luci.main.lang='zh_cn'
+set luci.main.mediaurlbase='/luci-static/apollo'
+set network_panel.main.backend_mode='auto'
+set ttyd.@ttyd[0].interface='@lan'
+set ttyd.@ttyd[0].command='/bin/login'
+commit
+EOF

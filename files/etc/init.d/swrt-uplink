@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+
+START=78
+USE_PROCD=1
+
+start_service() {
+	[ "$(board_name)" = nradio,wt9106 ] || return 0
+	config_load swrt_uplink
+	local port_mode
+	config_get port_mode main port_mode wan
+
+	procd_open_instance port
+	procd_set_param command /usr/sbin/swrt-uplink port "$port_mode"
+	procd_set_param respawn
+	procd_close_instance
+	procd_open_instance cellular
+	procd_set_param command /usr/sbin/swrt-uplink cellular
+	procd_set_param respawn
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger swrt_uplink
+	procd_add_interface_trigger 'interface.up' lan /etc/init.d/swrt-uplink reload
+}

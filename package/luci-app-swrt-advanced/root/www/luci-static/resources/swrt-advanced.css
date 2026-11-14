@@ -1,0 +1,14 @@
+.swrt-advanced,.swrt-page{box-sizing:border-box;width:100%;max-width:var(--luci-ui-content-width,1360px);margin:auto;padding-inline:var(--luci-ui-app-gutter,clamp(10px,2vw,20px))}
+.swrt-advanced .np-page-heading,.swrt-page .np-page-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.swrt-main-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--luci-ui-section-gap,16px)}
+.swrt-fields,.swrt-modems,.swrt-workspace{display:grid;gap:14px;min-width:0}
+.swrt-fields .np-info-field{display:grid;gap:6px}
+.swrt-fields select{width:100%;margin:0}
+.swrt-modem{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--np-soft)}
+.swrt-modem .np-chip{margin-inline-start:auto}
+.swrt-save,.swrt-status-strip,.swrt-details{margin-top:16px}
+.swrt-status-strip,.swrt-details{padding:14px 16px;border:1px solid var(--np-line);border-radius:var(--luci-ui-card-radius,16px);background:var(--np-card)}
+.swrt-details summary{cursor:pointer;font-weight:650}
+.swrt-details-content{margin-top:12px}
+.swrt-page [hidden],.swrt-advanced [hidden]{display:none!important}
+@media(max-width:720px){.swrt-main-grid{grid-template-columns:minmax(0,1fr)}}

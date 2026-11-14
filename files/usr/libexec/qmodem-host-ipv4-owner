@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# QModem calls this board hook before choosing the native netifd-backed protocol.
+case "$1" in ''|*[!a-zA-Z0-9_]*) exit 1 ;; esac
+[ "$(uci -q get "qmodem.$1.data_interface")" = usb ] || exit 1
+netdev=$(/usr/share/qmodem/modem_netdev.sh "$1") || exit 1
+/usr/sbin/swrt-qmi-format "$netdev"

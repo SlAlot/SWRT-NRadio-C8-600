@@ -1,0 +1,32 @@
+#!/bin/sh
+
+uplink_status() {
+	. /lib/functions.sh
+	. /usr/share/qmodem/instance.sh
+	. /lib/functions/swrt-modem.sh
+	local port_role=isolated mode= path_usb carrier ports
+	carrier=$(cat /sys/class/net/wan/carrier 2>/dev/null)
+	if [ -e /sys/class/net/br-lan/brif/wan ]; then
+		port_role=lan
+	elif ubus -t 2 call network.interface.wan status 2>/dev/null | jq -e '.autostart == true' >/dev/null; then
+		port_role=wan
+	fi
+	ports=$(swrt_modem_list | while IFS="$(printf '\t')" read -r section path port alias metric name; do
+		path_usb=false
+		if swrt_modem_usb_up "$section" "$alias"; then path_usb=true; fi
+		jq -nc --arg slot "$path" --arg name "$name" --argjson usb "$path_usb" '{slot:$slot,name:$name,usb:$usb}'
+	done | jq -s '.')
+	if swrt_phy_up; then mode=phy
+	elif printf '%s\n' "$ports" | jq -e 'any(.[]; .usb)' >/dev/null; then mode=usb
+	fi
+	jq -nc --arg role "$port_role" --arg carrier "$carrier" --arg mode "$mode" \
+		--argjson modems "$ports" \
+		'{role:$role,carrier:($carrier == "1"),mode:$mode,modems:$modems}'
+}
+
+case "$1:$2" in
+	list:) printf '%s\n' '{"uplink":{},"status":{},"check":{},"download":{},"set_source":{"source":""},"install":{"keep":0,"sha256":""}}' ;;
+	call:uplink) uplink_status ;;
+	call:set_source) /usr/libexec/swrt-upgrade set-source; exit 0 ;;
+	call:status|call:check|call:download|call:install) /usr/libexec/swrt-upgrade "$2"; exit 0 ;;
+	esac

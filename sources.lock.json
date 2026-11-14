@@ -1,0 +1,31 @@
+{
+  "immortalwrt": {
+    "tag": "v25.12.2",
+    "commit": "4fc16f2985a358bd43bb522e43f05395fcbd6ed5",
+    "kernel": "6.12.103"
+  },
+  "llvm-bpf": {
+    "version": "21.1.6",
+    "url": "https://downloads.immortalwrt.org/releases/25.12.2/targets/mediatek/filogic/llvm-bpf-21.1.6.Linux-x86_64.tar.zst",
+    "sha256": "58a8c1f3664892ca309d9888e8d551e8168916a9a83e1ada93e9914f9727f09b"
+  },
+  "feeds": {
+    "qmodem": ["FUjr/QModem", "1eae68976ad018af2bdde7204b01a2b0a19b7e69"],
+    "istore": ["istoreos/istore", "a97ace34f2da358a015b094d326bba2697697f2e"]
+  },
+  "packages": {
+    "openclash": ["vernesong/OpenClash", "e553e82e01c697aefbe1555261a503f425e00ccd", "luci-app-openclash"],
+    "luci-app-wlmbstart": ["SlAlot/luci-app-wlmbstart", "fce222f945d0cd0391e4591dda84126356839dd2", "."],
+    "luci-theme-apollo": ["SlAlot/luci-theme-apollo", "d27d4cb94d5523ad6b351652f2e34770a0d786ff", "."]
+  },
+  "wlmb-server": {
+    "version": "1.1.7",
+    "url": "https://github.com/SlAlot/wlmb-server/releases/download/v1.1.7/wlmb-server-1.1.7-aarch64_generic.ipk",
+    "sha256": "09922e5c9ef532527ccb687e07317bb99a4308b2cdd49a0ced41e82935995811"
+  },
+  "mihomo": {
+    "version": "1.19.34",
+    "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.34/mihomo-linux-arm64-v1.19.34.gz",
+    "sha256": "daaf78a6240a282cdfd75bcbf98fe321f6bd52765cc29e79f344191198f0b50f"
+  }
+}

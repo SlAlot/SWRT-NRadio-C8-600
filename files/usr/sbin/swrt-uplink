@@ -1,0 +1,107 @@
+#!/bin/sh
+
+PORT=wan
+PORT_SYS=/sys/class/net/$PORT
+LAN_MEMBER=/sys/class/net/br-lan/brif/$PORT
+PORT_ARG='{"name":"wan"}'
+
+iface() {
+	ubus -t 3 call "network.interface.$1" "$2" ${3:+"$3"}
+}
+
+set_autostart() {
+	local state
+	state=$(iface "$1" status | jsonfilter -e '@.autostart')
+	case "$2:$state" in
+		up:true|down:false) return 0 ;;
+		up:false|down:true) iface "$1" "$2" ;;
+		*) [ "$1" = wan6 ] && ! uci -q get network.wan6 >/dev/null ;;
+	esac
+}
+
+detach_port() {
+	if [ -e "$LAN_MEMBER" ]; then
+		iface lan remove_device "$PORT_ARG" || return 1
+	fi
+	[ ! -e "$PORT_SYS/master" ]
+}
+
+isolate_port() {
+	set_autostart wan6 down && set_autostart wan down && detach_port
+}
+
+apply_port_role() {
+	case "$1" in
+		wan)
+			detach_port && set_autostart wan up && set_autostart wan6 up
+			;;
+		lan)
+			set_autostart wan6 down && set_autostart wan down || return 1
+			[ -e "$LAN_MEMBER" ] && return 0
+			[ "$(iface lan status | jsonfilter -e '@.device')" = br-lan ] || return 1
+			[ ! -e "$PORT_SYS/master" ] &&
+				[ -z "$(ip -o addr show dev "$PORT" scope global)" ] &&
+				iface lan add_device "$PORT_ARG"
+			;;
+	esac
+}
+
+watch_port() {
+	local mode="$1" role='' observed='' carrier changes
+	case "$mode" in auto|lan|wan) ;; *) return 2 ;; esac
+	while sleep 1; do
+		if [ "$mode" != auto ]; then
+			apply_port_role "$mode"
+			continue
+		fi
+		if [ -z "$role" ]; then
+			isolate_port || continue
+			ip link set dev "$PORT" up 2>/dev/null || continue
+		fi
+		carrier=$(cat "$PORT_SYS/carrier" 2>/dev/null)
+		changes=$(cat "$PORT_SYS/carrier_changes" 2>/dev/null)
+		if [ -n "$role" ] && { [ "$carrier" != 1 ] || [ "$changes" != "$observed" ]; }; then
+			role=''
+			isolate_port
+			continue
+		fi
+		[ "$carrier" = 1 ] && [ -n "$changes" ] || continue
+		if [ -z "$role" ]; then
+			# Probe the detached port without installing an address or route.
+			[ -z "$(ip -o addr show dev "$PORT" scope global)" ] || continue
+			if udhcpc -i "$PORT" -n -q -t 4 -T 1 -s /bin/true >/dev/null 2>&1; then
+				role=wan
+			else
+				role=lan
+			fi
+			observed="$changes"
+			if [ "$(cat "$PORT_SYS/carrier" 2>/dev/null)" != 1 ] ||
+				[ "$(cat "$PORT_SYS/carrier_changes" 2>/dev/null)" != "$observed" ]; then
+				role=''
+				continue
+			fi
+			logger -t swrt-uplink "Fourth port selected $role"
+		fi
+		apply_port_role "$role" || continue
+	done
+}
+
+apply_cellular() {
+	local status owner
+	status=$(ubus -t 3 call network.interface dump) || return 1
+	owner=$(printf '%s\n' "$status" | jq -er '
+		any(.interface[]; .interface != "cpephy" and .interface != "cpephy6" and
+			(.device == "cpe" or .l3_device == "cpe")) | tostring') || return 1
+	# Keep the board DHCP client out of the way when another interface owns cpe.
+	if [ "$owner" = true ]; then
+		set_autostart cpephy6 down && set_autostart cpephy down
+	else
+		set_autostart cpephy up && set_autostart cpephy6 up
+	fi
+}
+
+case "$1" in
+	port) watch_port "$2" ;;
+	cellular) while sleep 5; do apply_cellular; done ;;
+	*) exit 2 ;;
+esac

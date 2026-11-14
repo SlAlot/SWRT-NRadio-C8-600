@@ -1,0 +1,20 @@
+#!/bin/sh
+
+. /lib/functions.sh
+[ "$(board_name)" = nradio,wt9106 ] || exit 0
+
+# Convert the factory priority pair from earlier SWRT releases.
+if [ "$(uci -q get mwan3.wired.metric)" = 1 ] &&
+   [ "$(uci -q get mwan3.wired.interface)" = wan ] &&
+   [ "$(uci -q get mwan3.swrt_failover)" = policy ]; then
+	uci set mwan3.wired.metric=3
+	[ "$(uci -q get mwan3.swrt_cpephy.metric)" != 2 ] || uci set mwan3.swrt_cpephy.metric=1
+	uci commit mwan3 || exit 1
+fi
+for interface in wan wan6 cpephy cpephy6; do
+	case "$interface:$(uci -q get "network.$interface.metric")" in
+		wan:10|wan6:10) uci set "network.$interface.metric=30" ;;
+		cpephy:20|cpephy6:20) uci set "network.$interface.metric=5" ;;
+	esac
+done
+uci commit network

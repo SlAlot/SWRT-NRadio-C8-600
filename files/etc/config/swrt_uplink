@@ -1,0 +1,2 @@
+config settings 'main'
+	option port_mode 'wan'

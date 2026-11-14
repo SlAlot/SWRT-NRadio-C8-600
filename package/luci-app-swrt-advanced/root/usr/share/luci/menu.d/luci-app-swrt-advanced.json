@@ -1,0 +1,14 @@
+{
+	"admin/system/swrt-uplink": {
+		"title": "SWRT 高级设置",
+		"order": 83,
+		"action": { "type": "view", "path": "system/swrt-advanced" },
+		"depends": { "acl": ["luci-app-swrt-advanced"] }
+	},
+	"admin/system/swrt-upgrade": {
+		"title": "SWRT 在线更新",
+		"order": 84,
+		"action": { "type": "view", "path": "system/swrt-upgrade" },
+		"depends": { "acl": ["luci-app-swrt-advanced"] }
+	}
+}

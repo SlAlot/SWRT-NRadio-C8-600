@@ -1,0 +1,30 @@
+name: Build firmware
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install build prerequisites
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          bash scripts/install-build-deps.sh
+          df -h
+      - name: Build and verify firmware
+        run: bash scripts/build-local.sh
+      - name: Store firmware artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc532a479d7789f # v6
+        with:
+          name: SWRT-C8-600-${{ github.sha }}
+          path: artifacts/${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 30

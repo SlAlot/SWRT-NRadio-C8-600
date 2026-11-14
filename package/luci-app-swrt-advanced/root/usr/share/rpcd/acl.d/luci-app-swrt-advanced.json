@@ -1,0 +1,7 @@
+{
+	"luci-app-swrt-advanced": {
+		"description": "Manage SWRT board settings and firmware updates",
+		"read": { "ubus": { "luci.swrt_advanced": ["uplink", "status"] }, "uci": ["swrt_uplink"] },
+		"write": { "ubus": { "luci.swrt_advanced": ["check", "download", "install", "set_source"] }, "uci": ["swrt_uplink"] }
+	}
+}

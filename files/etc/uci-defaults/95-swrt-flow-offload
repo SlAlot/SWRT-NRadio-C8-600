@@ -1,0 +1,17 @@
+#!/bin/sh
+
+. /lib/functions.sh
+[ "$(board_name)" = nradio,wt9106 ] || exit 0
+
+case "$(uci -q get swrt_uplink.main.acceleration)" in
+	off) software=0; hardware=0 ;;
+	software) software=1; hardware=0 ;;
+	auto) software=1; hardware=1 ;;
+	*) exit 0 ;;
+esac
+
+uci set "firewall.@defaults[0].flow_offloading=$software" &&
+	uci set "firewall.@defaults[0].flow_offloading_hw=$hardware" &&
+	uci commit firewall &&
+	uci delete swrt_uplink.main.acceleration &&
+	uci commit swrt_uplink

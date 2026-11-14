@@ -1,0 +1,71 @@
+#!/bin/sh
+
+[ "$ACTION" = ifup ] || exit 0
+case "$INTERFACE" in ''|*[!A-Za-z0-9_]*|wan|wan6|lan|loopback|cpephy6) exit 0 ;; esac
+[ "$(uci -q get mwan3.swrt_failover)" = policy ] || exit 0
+
+if [ "$INTERFACE" = cpephy ]; then
+	[ "$(uci -q get network.cpephy.device)" = cpe ] || exit 0
+	metric=1
+else
+	# QModem owns the USB interface name and its WAN firewall binding.
+	owner=$(uci -q get "network.$INTERFACE.modem_config")
+	case "$owner" in ''|*[!A-Za-z0-9_]*) exit 0 ;; esac
+	[ "$(uci -q get "qmodem.$owner")" = modem-device ] || exit 0
+	[ "$(uci -q get "qmodem.$owner.data_interface")" = usb ] || exit 0
+	alias=$(uci -q get "qmodem.$owner.alias")
+	case "$alias" in ''|-) alias=$owner ;; esac
+	[ "$INTERFACE" = "$alias" ] || exit 0
+	[ "$(uci -q get "network.$INTERFACE.proto")" != dhcpv6 ] || exit 0
+	device=$(uci -q get "network.$INTERFACE.device")
+	metric=2
+	[ "$device" != cpe ] || metric=1
+fi
+
+(
+	flock -x 9 || exit 1
+	# A QModem-managed cpe takes over the board's DHCP path and its MWAN slot.
+	dirty=0
+	if [ "${device:-}" = cpe ] && [ "$(uci -q get mwan3.cpephy.enabled)" = 1 ]; then
+		uci set mwan3.cpephy.enabled=0 || exit 1
+		dirty=1
+	elif [ "$INTERFACE" = cpephy ] && [ "$(uci -q get mwan3.cpephy.enabled)" = 0 ]; then
+		uci set mwan3.cpephy.enabled=1 || exit 1
+		dirty=1
+	fi
+	member="swrt_$INTERFACE"
+	if [ "$(uci -q get "mwan3.$member")" = member ]; then
+		[ "$dirty" = 1 ] || exit 0
+		uci commit mwan3 || exit 1
+		flock -u 9
+		/etc/init.d/mwan3 enabled && /etc/init.d/mwan3 reload
+		exit 0
+	fi
+	if ! uci -q get "mwan3.$INTERFACE" >/dev/null; then
+		uci -q batch <<EOF || exit 1
+set mwan3.$INTERFACE=interface
+set mwan3.$INTERFACE.enabled='1'
+set mwan3.$INTERFACE.family='ipv4'
+set mwan3.$INTERFACE.track_method='ping'
+set mwan3.$INTERFACE.reliability='1'
+set mwan3.$INTERFACE.count='1'
+set mwan3.$INTERFACE.interval='8'
+set mwan3.$INTERFACE.timeout='3'
+set mwan3.$INTERFACE.down='3'
+set mwan3.$INTERFACE.up='3'
+add_list mwan3.$INTERFACE.track_ip='223.5.5.5'
+add_list mwan3.$INTERFACE.track_ip='119.29.29.29'
+EOF
+	fi
+	uci -q batch <<EOF || exit 1
+set mwan3.$member=member
+set mwan3.$member.interface='$INTERFACE'
+set mwan3.$member.metric='$metric'
+set mwan3.$member.weight='1'
+add_list mwan3.swrt_failover.use_member='$member'
+commit mwan3
+EOF
+	flock -u 9
+	/etc/init.d/mwan3 enabled && /etc/init.d/mwan3 reload
+) 9>/var/lock/swrt-mwan3.lock
+exit 0

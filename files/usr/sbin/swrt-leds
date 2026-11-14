@@ -1,0 +1,158 @@
+#!/bin/sh
+
+LED_DIR=/sys/class/leds
+LED_5G=blue:indicator-0
+LED_4G=blue:indicator-1
+LED_WIFI=blue:wlan
+QMODEM=/usr/share/qmodem
+
+set_led() {
+	local brightness="$LED_DIR/$1/brightness"
+	[ -w "$brightness" ] || return 0
+	[ "$(cat "$brightness")" = "$2" ] || printf '%s\n' "$2" > "$brightness"
+}
+
+set_cellular_leds() {
+	case "$1" in
+		5g) set_led "$LED_4G" 0; set_led "$LED_5G" 1 ;;
+		4g) set_led "$LED_5G" 0; set_led "$LED_4G" 1 ;;
+		off) set_led "$LED_5G" 0; set_led "$LED_4G" 0 ;;
+	esac
+}
+
+update_wifi_led() {
+	if iw dev | awk '$1 == "ssid" && NF > 1 { active = 1 } END { exit !active }'; then
+		set_led "$LED_WIFI" 1
+	else
+		set_led "$LED_WIFI" 0
+	fi
+}
+
+cell_info() {
+	ubus -t 4 call qmodem cell_info "$(jq -nc --arg section "$1" '{config_section:$section}')"
+}
+
+registration() {
+	local status reply
+	# A read reply includes <n>,<stat>. Ignore the single-field notifications.
+	reply=$(at "$at_port" "AT+$1?" 2>/dev/null | awk -v tag="+$1:" '
+		$1 == tag || index($0, tag) == 1 {
+			sub(/^[^:]+:[[:space:]]*/, "")
+			split($0, fields, ",")
+			gsub(/[[:space:]]/, "", fields[2])
+			if (fields[1] ~ /^[0-5][[:space:]]*$/ && fields[2] ~ /^[0-9]+$/) {
+				gsub(/[[:space:]]/, "", fields[5])
+				print fields[2], fields[5] ~ /^[0-9]+$/ ? fields[5] : "-"
+				exit
+			}
+		}')
+	status=${reply%% *}
+	case "$status" in
+		1|5) printf 'registered %s\n' "${reply#* }" ;;
+		[0-9]|[0-9][0-9]) echo off ;;
+		*) echo unknown ;;
+	esac
+}
+
+operator_rat() {
+	at "$at_port" 'AT+COPS?' 2>/dev/null | awk '
+		/^\+COPS:[[:space:]]*[014],[[:space:]]*[012],[[:space:]]*"[^"]+",[[:space:]]*[0-9]+[[:space:]]*$/ {
+			sub(/^.*,/, "")
+			gsub(/[[:space:]]/, "")
+			print
+			exit
+		}'
+}
+
+cellular_status() {
+	local section="$1" at_port="$2" sim mode eps nr rat
+	sim=$(at "$at_port" 'AT+CPIN?' 2>/dev/null | tr -d '\r')
+	if printf '%s\n' "$sim" | grep -Eiq '^\+CPIN:[[:space:]]*(SIM |PH-)|^\+CME ERROR:[[:space:]]*(1[01235][[:space:]]*$|SIM (not inserted|failure|wrong))'; then
+		echo off
+		return
+	fi
+
+	mode=$(cell_info "$section" 2>/dev/null | jq -r '
+		first(.modem_info[]? | select(.key == "network_mode" or .key == "Network Mode") | .value | strings | ascii_upcase) // empty' 2>/dev/null)
+	case "$mode" in
+		*EN-DC*|*ENDC*|*NSA*|*LTE-NR*)
+			eps=$(registration CEREG)
+			case "$eps" in 'registered '*) echo 5g; return ;; off) echo off; return ;; esac
+			;;
+		*NR*|*5G*)
+			nr=$(registration C5GREG)
+			case "$nr" in 'registered '*) echo 5g; return ;; off) echo off; return ;; esac
+			;;
+		*LTE*|*4G*)
+			eps=$(registration CEREG)
+			case "$eps" in 'registered '*) echo 4g; return ;; off) echo off; return ;; esac
+			;;
+		*WCDMA*|*UMTS*|*GSM*|*3G*|*2G*) echo off; return ;;
+	esac
+
+	# Some modem firmware exposes the current RAT only in COPS or omits C5GREG.
+	rat=$(operator_rat)
+	case "$rat" in
+		11) [ "${nr:-$(registration C5GREG)}" = off ] && echo off || echo 5g ;;
+		13) [ "${eps:-$(registration CEREG)}" = off ] && echo off || echo 5g ;;
+		7|9) [ "${eps:-$(registration CEREG)}" = off ] && echo off || echo 4g ;;
+		10) [ "${nr:-$(registration C5GREG)}" = off ] && echo off || echo 4g ;;
+		'')
+			eps=${eps:-$(registration CEREG)}
+			nr=${nr:-$(registration C5GREG)}
+			case "$nr:$eps" in
+				'registered '*:*|*:'registered 13') echo 5g ;;
+				*:'registered 7'|*:'registered 9') echo 4g ;;
+				*:'registered '*|unknown:unknown) echo unknown ;;
+				*) echo off ;;
+			esac
+			;;
+		*) echo off ;;
+	esac
+}
+
+update_cellular_leds() {
+	local selected status=off
+	selected=$(swrt_selected_modem)
+	if [ "$selected" != "$last_modem" ]; then
+		last_modem="$selected"
+		misses=0
+		set_cellular_leds off
+	fi
+	if [ -n "$selected" ]; then
+		status=$(timeout 8 /usr/sbin/swrt-leds probe "${selected%% *}" "${selected#* }") || status=unknown
+	fi
+	case "$status" in
+		4g|5g|off) misses=0; set_cellular_leds "$status" ;;
+		*)
+			misses=$((misses + 1))
+			[ "$misses" -le 10 ] || set_cellular_leds off
+			;;
+	esac
+}
+
+case "$1" in
+	watch)
+		. /lib/functions.sh
+		. "$QMODEM/instance.sh"
+		. /lib/functions/swrt-modem.sh
+		last_modem=
+		misses=0
+		trap 'set_cellular_leds off; set_led "$LED_WIFI" 0; exit' TERM INT
+		while :; do
+			update_wifi_led
+			sleep 12 &
+			update_cellular_leds
+			wait "$!"
+		done
+		;;
+	probe)
+		. "$QMODEM/instance.sh"
+		. "$QMODEM/modem_util.sh"
+		qmodem_port_owned "$2" "$3" && [ -c "$3" ] || exit 1
+		[ "$(uci -q get "qmodem.$2.use_ubus")" = 0 ] || use_ubus_flag=-u
+		options='-t 2'
+		cellular_status "$2" "$3"
+		;;
+	*) exit 2 ;;
+esac

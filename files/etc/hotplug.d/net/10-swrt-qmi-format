@@ -1,0 +1,4 @@
+#!/bin/sh
+
+[ "$ACTION" = add ] || [ "$ACTION" = bind ] || exit 0
+/usr/sbin/swrt-qmi-format "${INTERFACE:-$DEVICENAME}" || :

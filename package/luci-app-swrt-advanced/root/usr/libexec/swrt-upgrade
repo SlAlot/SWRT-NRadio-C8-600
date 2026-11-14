@@ -1,0 +1,296 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+# Only the authenticated RPC wrapper exposes public methods. Download never flashes.
+set -eu
+umask 077
+ROOT="${SWRT_UPGRADE_ROOT:-}"
+SCRIPT="${SWRT_UPGRADE_SCRIPT:-/usr/libexec/swrt-upgrade}"
+DIR="$ROOT/tmp/swrt-upgrade"
+REPO='SlAlot/SWRT-NRadio-C8-600'
+DEVICE='nradio,wt9106'
+LAYOUT='spi-nand-128m-fit'
+RELEASE_PREFIX='SWRT-C8-600-'
+VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+API="https://api.github.com/repos/$REPO/releases"
+CONFIG_DIR="$ROOT/etc/config"
+SOURCE="$(uci -c "$CONFIG_DIR" -q get swrt_upgrade.main.source 2>/dev/null || true)"
+case "$SOURCE" in proxy|github) ;; *) SOURCE=proxy ;; esac
+IMAGE="$DIR/firmware.itb"
+STATE="$DIR/state.json"
+RELEASE="$DIR/release.json"
+SYSUPGRADE="$ROOT/sbin/sysupgrade"
+PUBKEY="$ROOT/usr/share/swrt/ota-public.pem"
+[ ! -f "$ROOT/rom/usr/share/swrt/ota-public.pem" ] || PUBKEY="$ROOT/rom/usr/share/swrt/ota-public.pem"
+MODE="${1:-status}"
+
+reply_error() { jq -nc --arg message "$1" '{ok:false,message:$message}'; }
+fail() {
+    jq -nc --arg message "$1" --argjson at "$(date +%s)" \
+        '{phase:"failed",message:$message,updated:$at}' > "$STATE.new"
+    mv "$STATE.new" "$STATE"
+    reply_error "$1"
+    exit 1
+}
+[ ! -L "$DIR" ] || { reply_error '升级临时目录无效'; exit 1; }
+mkdir -p "$DIR"
+[ "$(stat -c %u "$DIR")" = "$(id -u)" ] || { reply_error '升级临时目录所有者无效'; exit 1; }
+chmod 700 "$DIR"
+
+phase() {
+    jq -nc --arg phase "$1" --arg message "$2" --argjson at "$(date +%s)" \
+        '{phase:$phase,message:$message,updated:$at}' > "$STATE.new"
+    mv "$STATE.new" "$STATE"
+}
+lock() {
+    exec 9>"$DIR/lock"
+    flock -n 9 || { reply_error '已有检查、下载或升级任务正在运行'; exit 1; }
+}
+identity() {
+    BOARD="$(cat "$ROOT/tmp/sysinfo/board_name" 2>/dev/null || true)"
+    CURRENT="$(sed -n "s/^SWRT_RELEASE='$RELEASE_PREFIX\([^']*\)'$/\1/p" "$ROOT/rom/etc/swrt-release" 2>/dev/null || true)"
+    printf '%s\n' "$CURRENT" | grep -Eq "$VERSION_RE" || CURRENT=
+    FS="$(awk '$2 == "/rom" && $3 == "squashfs" {print "squashfs"; exit}' "$ROOT/proc/mounts" 2>/dev/null || true)"
+    NAND="$(awk '$2 == "07280000" && $3 == "00020000" && $4 == "\"ubi\"" {print "yes"; exit}' "$ROOT/proc/mtd" 2>/dev/null || true)"
+    if [ "$BOARD" = "$DEVICE" ] && [ -n "$CURRENT" ] && [ "$FS" = squashfs ] && [ "$NAND" = yes ]; then
+        ELIGIBLE=true
+    else
+        ELIGIBLE=false
+    fi
+}
+require_device() {
+    identity
+    [ "$ELIGIBLE" = true ] || fail '在线更新仅适用于已安装 SWRT 的 128 MiB NAND 版 WT9106，请核对设备和分区'
+}
+fetch() {
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 5 --max-time 15 --max-filesize 1048576 \
+        -H 'Accept: application/vnd.github+json' -H 'User-Agent: SWRT-Online-Upgrade/1.1' \
+        -o "$2" "$(transport_url "$1")" 2>"$DIR/network.log"
+}
+transport_url() {
+    case "$SOURCE" in
+        proxy) printf 'https://gh-proxy.com/%s' "$1" ;;
+        github) printf '%s' "$1" ;;
+    esac
+}
+require_source() {
+    [ "$(jq -r '.source // ""' "$RELEASE")" = "$SOURCE" ] || fail '更新源已变化，请重新检查更新'
+}
+manifest_digest() {
+    openssl pkeyutl -verify -rawin -pubin -inkey "$PUBKEY" -in "$DIR/ota.json" -sigfile "$DIR/ota.json.sig" >"$DIR/signature.log" 2>&1 || return 1
+    jq -er --arg repo "$REPO" --arg device "$DEVICE" --arg layout "$LAYOUT" --slurpfile asset "$RELEASE" '
+        select(.repository == $repo and .board == $device and .layout == $layout and
+            .version == $asset[0].version and .name == $asset[0].name and .size == $asset[0].size) |
+        .sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$DIR/ota.json"
+}
+select_release() {
+    jq -e --arg repo "$REPO" --arg source "$SOURCE" --arg prefix "$RELEASE_PREFIX" --arg re "$VERSION_RE" '
+        select(.draft == false and .prerelease == false) |
+        .tag_name as $tag |
+        select($tag | type == "string" and startswith($prefix)) |
+        ($tag | ltrimstr($prefix)) as $version |
+        select($version | test($re)) |
+        ("immortalwrt-swrt-c8-600-" + $version + "-mediatek-filogic-nradio_wt9106-squashfs-sysupgrade.itb") as $name |
+        [.assets[] | select(.name == $name)] as $images |
+        select(($images|length) == 1) |
+        $images[0] as $image |
+        ("https://github.com/" + $repo + "/releases/download/" + $tag + "/") as $base |
+        select($image.browser_download_url == ($base + $name)) |
+        .assets as $assets |
+        select(all(["ota.json","ota.json.sig"][]; . as $file |
+            ([ $assets[] | select(.name == $file and .browser_download_url == ($base + $file)) ] | length) == 1)) |
+        select(($image.size|type) == "number" and $image.size > 0 and
+            $image.size <= 104857600 and ($image.size|floor) == $image.size) |
+        select(($image.id|type) == "number") |
+        {version:$version,tag:$tag,name:$name,size:$image.size,id:$image.id,source:$source,
+         url:$image.browser_download_url,manifest_url:($base + "ota.json"),signature_url:($base + "ota.json.sig"),
+         digest:($image.digest // ""),published_at:.published_at,
+         release_url:("https://github.com/"+$repo+"/releases/tag/"+$tag),notes:(.body // "")}
+        ' "$1" > "$2"
+}
+newer() {
+    jq -ne --arg latest "$1" --arg current "$CURRENT" \
+        '($latest|split(".")|map(tonumber)) > ($current|split(".")|map(tonumber))' >/dev/null
+}
+emit_status() {
+    identity
+    # A killed worker must not leave a permanent busy screen. A live worker holds lock 9.
+    if [ -s "$STATE" ]; then
+        case "$(jq -r '.phase' "$STATE")" in
+            checking|downloading|verifying|preparing)
+                exec 8>"$DIR/lock"
+                if flock -n 8; then phase failed '上次任务已中断，请重新检查更新'; fi
+                exec 8>&-
+                ;;
+        esac
+    fi
+    bytes=0
+    [ ! -f "$IMAGE.part" ] || bytes="$(stat -c %s "$IMAGE.part")"
+    [ ! -f "$IMAGE" ] || bytes="$(stat -c %s "$IMAGE")"
+    state='{"phase":"idle","message":"点击检查更新，获取本仓库最新正式固件"}'
+    [ "$ELIGIBLE" = true ] || state='{"phase":"idle","message":"仅支持已安装 SWRT 的 128 MiB NAND 版 WT9106"}'
+    [ ! -s "$STATE" ] || state="$(cat "$STATE")"
+    release='null'
+    [ ! -s "$RELEASE" ] || release="$(cat "$RELEASE")"
+    jq -nc --arg current "$CURRENT" --arg fs "$FS" --argjson eligible "$ELIGIBLE" --arg source "$SOURCE" \
+        --arg repo "$REPO" --argjson state "$state" --argjson release "$release" \
+        --argjson bytes "$bytes" \
+        '{ok:true,current:$current,filesystem:$fs,repository:$repo,source:$source,
+          eligible:$eligible,
+          state:$state,release:$release,downloaded_bytes:$bytes}'
+}
+check_image() {
+    require_device
+    require_source
+    name="$(jq -r '.name' "$RELEASE")"
+    version="$(jq -r '.version' "$RELEASE")"
+    [ "$name" = "immortalwrt-swrt-c8-600-$version-mediatek-filogic-nradio_wt9106-squashfs-sysupgrade.itb" ] || fail '固件名称不匹配'
+    newer "$version" || fail '该固件不是更新版本，已阻止回刷'
+    expected="$(jq -er '.sha256 | select(test("^[0-9a-f]{64}$"))' "$RELEASE")" || fail '缺少有效校验值'
+    [ "$(manifest_digest)" = "$expected" ] || fail '更新清单签名无效或摘要已变化'
+    if [ ! -f "$IMAGE" ] || [ -L "$IMAGE" ]; then fail '固件文件不存在'; fi
+    [ "$(stat -c %s "$IMAGE")" = "$(jq -r '.size' "$RELEASE")" ] || fail '固件大小不一致'
+    actual="$(sha256sum "$IMAGE")"
+    [ "${actual%% *}" = "$expected" ] || fail '固件 SHA256 校验失败'
+    fwtool -i "$DIR/image-metadata.json" "$IMAGE" >/dev/null 2>&1 || fail '固件缺少设备元数据'
+    jq -e --arg device "$DEVICE" '.supported_devices == [$device]' "$DIR/image-metadata.json" >/dev/null || fail '固件设备标识不匹配'
+    "$SYSUPGRADE" -T "$IMAGE" >"$DIR/validation.log" 2>&1 || fail '系统镜像兼容性校验失败，请改用手动升级排查'
+    result="$(ubus -S call system validate_firmware_image "$(jq -nc --arg path "$IMAGE" '{path:$path}')")" || fail '无法读取系统镜像验证结果'
+    printf '%s' "$result" | jq -e '.valid == true' >/dev/null || fail '系统拒绝该镜像，禁止强制升级'
+    if [ "${KEEP:-0}" = 1 ]; then
+        printf '%s' "$result" | jq -e '.allow_backup == true' >/dev/null || fail '此镜像不允许保留配置'
+    fi
+}
+worker_exit() {
+    code=$?
+    trap - EXIT
+    if [ "$code" -ne 0 ]; then
+        if [ "$(jq -r '.phase' "$STATE" 2>/dev/null || true)" != failed ]; then
+            phase failed '任务中断或执行失败，请重新检查更新'
+        fi
+        rm -f "$IMAGE.part" "$IMAGE"
+    fi
+    exit "$code"
+}
+
+case "$MODE" in
+    status) emit_status ;;
+    set-source)
+        lock
+        require_device
+        request="$(cat)"
+        selected="$(printf '%s' "$request" | jq -er '.source | select(. == "proxy" or . == "github")')" || {
+            reply_error '请选择国内加速或 GitHub 官方源'; exit 1;
+        }
+        case "$(jq -r '.phase // "idle"' "$STATE" 2>/dev/null || true)" in
+            preparing|installing) reply_error '正在准备或刷写固件，暂不能切换更新源'; exit 1 ;;
+        esac
+        mkdir -p "$CONFIG_DIR"
+        [ ! -L "$CONFIG_DIR/swrt_upgrade" ] || { reply_error '更新源配置文件无效'; exit 1; }
+        [ -e "$CONFIG_DIR/swrt_upgrade" ] || : > "$CONFIG_DIR/swrt_upgrade"
+        mkdir -p "$DIR/uci"
+        if ! uci -c "$CONFIG_DIR" -t "$DIR/uci" set swrt_upgrade.main=settings ||
+           ! uci -c "$CONFIG_DIR" -t "$DIR/uci" set "swrt_upgrade.main.source=$selected" ||
+           ! uci -c "$CONFIG_DIR" -t "$DIR/uci" commit swrt_upgrade; then
+            rm -f "$DIR/uci/swrt_upgrade"
+            reply_error '更新源保存失败，请重试'; exit 1;
+        fi
+        if [ "$SOURCE" != "$selected" ]; then
+            rm -f "$RELEASE" "$IMAGE" "$IMAGE.part"
+            phase idle '更新源已保存，请检查更新'
+        fi
+        SOURCE="$selected"
+        emit_status
+        ;;
+    check)
+        lock
+        phase checking '正在连接所选更新源检查正式发布'
+        require_device
+        rm -f "$RELEASE" "$IMAGE" "$IMAGE.part"
+        fetch "$API/latest" "$DIR/api.json" || fail '无法连接固件发布源，请切换更新源重试，或在“备份与升级”手动上传'
+        select_release "$DIR/api.json" "$DIR/release.new" || fail '发布中没有匹配当前系统的完整固件和校验清单'
+        mv "$DIR/release.new" "$RELEASE"
+        if newer "$(jq -r '.version' "$RELEASE")"; then
+            phase available '发现新版本，可下载并校验固件'
+        else
+            phase current '当前已是最新版本，或当前构建比正式发布更新'
+        fi
+        emit_status
+        ;;
+    download)
+        lock
+        require_device
+        [ -s "$RELEASE" ] || fail '请先检查更新'
+        require_source
+        newer "$(jq -r '.version' "$RELEASE")" || fail '没有可下载的新版本'
+        phase downloading '正在下载固件，下载完成后仍需确认升级'
+        setsid /bin/sh "$SCRIPT" _download </dev/null >"$DIR/worker.log" 2>&1 &
+        jq -nc '{ok:true}'
+        ;;
+    _download)
+        # Lock FD 9 is inherited from the authenticated start request.
+        flock -n 9 || exit 1
+        trap worker_exit EXIT
+        trap 'exit 1' HUP INT TERM
+        require_device
+        require_source
+        tag="$(jq -er --arg prefix "$RELEASE_PREFIX" --arg re "$VERSION_RE" '.tag | select(startswith($prefix) and (ltrimstr($prefix) | test($re)))' "$RELEASE")"
+        fetch "$API/tags/$tag" "$DIR/api.json" || fail '无法重新确认发布信息'
+        select_release "$DIR/api.json" "$DIR/release.new" || fail '发布附件已变化，请重新检查'
+        jq -e --slurpfile old "$RELEASE" '.id == $old[0].id and .url == $old[0].url and
+            .size == $old[0].size and .digest == $old[0].digest' "$DIR/release.new" >/dev/null || fail '发布附件已替换，请重新检查更新'
+        fetch "$(jq -r '.manifest_url' "$RELEASE")" "$DIR/ota.json" || fail '无法获取签名更新清单'
+        fetch "$(jq -r '.signature_url' "$RELEASE")" "$DIR/ota.json.sig" || fail '无法获取更新清单签名'
+        sha="$(manifest_digest)" || fail '更新清单签名无效，或与设备及发布附件不匹配'
+        digest="$(jq -r '.digest' "$RELEASE")"
+        [ -z "$digest" ] || [ "$digest" = "sha256:$sha" ] || fail 'GitHub 附件摘要与校验清单不一致'
+        jq --arg sha "$sha" '. + {sha256:$sha}' "$RELEASE" > "$DIR/release.new"
+        mv "$DIR/release.new" "$RELEASE"
+        size="$(jq -r '.size' "$RELEASE")"
+        free="$(df -Pk "$ROOT/tmp" | awk 'NR == 2 {print $4}')"
+        case "$free" in ''|*[!0-9]*) fail '无法检查临时存储空间' ;; esac
+        [ "$free" -ge "$(( (size + 1023) / 1024 + 65536 ))" ] || fail '临时存储空间不足，请释放空间或改用手动升级'
+        rm -f "$IMAGE" "$IMAGE.part"
+        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 8 --max-time 900 --speed-time 30 --speed-limit 1024 \
+            -H 'User-Agent: SWRT-Online-Upgrade/1.1' \
+            --max-filesize "$size" -o "$IMAGE.part" "$(transport_url "$(jq -r '.url' "$RELEASE")")" \
+            2>"$DIR/network.log" || fail '固件下载失败，请检查所选更新源或切换后重试'
+        mv "$IMAGE.part" "$IMAGE"
+        phase verifying '正在校验 SHA256、设备和分区兼容性'
+        check_image
+        phase ready '全部校验通过，请确认备份和配置保留方式后升级'
+        ;;
+    install)
+        lock
+        [ "$(jq -r '.phase' "$STATE" 2>/dev/null || true)" = ready ] || fail '固件尚未完成校验'
+        request="$(cat)"
+        KEEP="$(printf '%s' "$request" | jq -er '.keep | select(. == 0 or . == 1)')" || fail '保留配置参数无效'
+        token="$(printf '%s' "$request" | jq -er '.sha256 | select(type == "string")')" || fail '缺少已确认固件的校验值'
+        [ "$token" = "$(jq -r '.sha256' "$RELEASE")" ] || fail '固件已变化，请重新确认'
+        phase preparing '正在执行刷写前的最终校验'
+        setsid /bin/sh "$SCRIPT" _install "$KEEP" </dev/null >"$DIR/worker.log" 2>&1 &
+        jq -nc '{ok:true}'
+        ;;
+    _install)
+        flock -n 9 || exit 1
+        trap worker_exit EXIT
+        trap 'exit 1' HUP INT TERM
+        KEEP="${2:-0}"
+        case "$KEEP" in 0|1) ;; *) fail '保留配置参数无效' ;; esac
+        check_image
+        phase installing '正在刷写固件，请勿断电，等待设备重启'
+        sync
+        # OpenWrt stage2 terminates this worker before reading the image.
+        # After handoff, neither a shutdown signal nor EXIT may remove it.
+        trap - EXIT HUP INT TERM
+        if [ "$KEEP" = 1 ]; then
+            "$SYSUPGRADE" "$IMAGE" || fail '系统升级程序拒绝或中止请求，请查看升级日志后重试'
+        else
+            "$SYSUPGRADE" -n "$IMAGE" || fail '系统升级程序拒绝或中止请求，请查看升级日志后重试'
+        fi
+        # A successful real sysupgrade does not return to this shell.
+        fail '升级程序意外退出，请查看系统日志，设备尚未确认完成升级'
+        ;;
+    *) reply_error '不支持的操作'; exit 1 ;;
+esac

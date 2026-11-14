@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/dts-v1/;
+/plugin/;
+
+#include "wt9106-bootargs.h"
+
+/* The supplied FIP selects config-1#mt7981-nradio-wt9106. */
+&{/chosen} {
+	bootargs-override = WT9106_BOOTARGS;
+};
