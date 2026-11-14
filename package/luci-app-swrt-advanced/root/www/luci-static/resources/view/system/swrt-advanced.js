@@ -76,7 +76,7 @@ return view.extend({
 			E('link', { rel: 'stylesheet', href: L.resource('swrt-advanced.css') }),
 			E('div', { 'class': 'np-page-heading' }, [
 				E('h2', { 'class': 'np-page-title' }, 'SWRT 高级设置'),
-				E('a', { href: L.url('admin/system/swrt-upgrade'), 'class': 'np-btn' }, '在线更新')
+				E('a', { href: L.url('admin', 'system', 'swrt-upgrade'), 'class': 'np-btn' }, '在线更新')
 			]),
 			E('div', { 'class': 'swrt-main-grid' }, [
 				card('第四个千兆口', [field('当前角色', role), field('工作方式', port, 'swrt-port'),

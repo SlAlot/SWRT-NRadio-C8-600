@@ -45,10 +45,19 @@ lock() {
     exec 9>"$DIR/lock"
     flock -n 9 || { reply_error '已有检查、下载或升级任务正在运行'; exit 1; }
 }
+valid_version() {
+    printf '%s\n' "$1" | grep -Exq "$VERSION_RE"
+}
+
+valid_sha256() {
+    case "$1" in *[!0-9a-f]*) return 1 ;; esac
+    [ "${#1}" -eq 64 ]
+}
+
 identity() {
     BOARD="$(cat "$ROOT/tmp/sysinfo/board_name" 2>/dev/null || true)"
     CURRENT="$(sed -n "s/^SWRT_RELEASE='$RELEASE_PREFIX\([^']*\)'$/\1/p" "$ROOT/rom/etc/swrt-release" 2>/dev/null || true)"
-    printf '%s\n' "$CURRENT" | grep -Eq "$VERSION_RE" || CURRENT=
+    valid_version "$CURRENT" || CURRENT=
     FS="$(awk '$2 == "/rom" && $3 == "squashfs" {print "squashfs"; exit}' "$ROOT/proc/mounts" 2>/dev/null || true)"
     NAND="$(awk '$2 == "07280000" && $3 == "00020000" && $4 == "\"ubi\"" {print "yes"; exit}' "$ROOT/proc/mtd" 2>/dev/null || true)"
     if [ "$BOARD" = "$DEVICE" ] && [ -n "$CURRENT" ] && [ "$FS" = squashfs ] && [ "$NAND" = yes ]; then
@@ -77,19 +86,27 @@ require_source() {
     [ "$(jq -r '.source // ""' "$RELEASE")" = "$SOURCE" ] || fail '更新源已变化，请重新检查更新'
 }
 manifest_digest() {
+    local digest
     openssl pkeyutl -verify -rawin -pubin -inkey "$PUBKEY" -in "$DIR/ota.json" -sigfile "$DIR/ota.json.sig" >"$DIR/signature.log" 2>&1 || return 1
-    jq -er --arg repo "$REPO" --arg device "$DEVICE" --arg layout "$LAYOUT" --slurpfile asset "$RELEASE" '
+    digest="$(jq -er --arg repo "$REPO" --arg device "$DEVICE" --arg layout "$LAYOUT" --slurpfile asset "$RELEASE" '
         select(.repository == $repo and .board == $device and .layout == $layout and
             .version == $asset[0].version and .name == $asset[0].name and .size == $asset[0].size) |
-        .sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$DIR/ota.json"
+        .sha256 | strings' "$DIR/ota.json")" || return 1
+    valid_sha256 "$digest" && printf '%s\n' "$digest"
 }
+release_tag() {
+    local tag version
+    tag="$(jq -er --arg field "$2" --arg prefix "$RELEASE_PREFIX" '
+        .[$field] | strings | select(startswith($prefix) and (contains("\n") | not))' "$1")" || return 1
+    version="${tag#"$RELEASE_PREFIX"}"
+    valid_version "$version" && printf '%s\n' "$tag"
+}
+
 select_release() {
-    jq -e --arg repo "$REPO" --arg source "$SOURCE" --arg prefix "$RELEASE_PREFIX" --arg re "$VERSION_RE" '
+    local tag
+    tag="$(release_tag "$1" tag_name)" || return 1
+    jq -e --arg repo "$REPO" --arg source "$SOURCE" --arg tag "$tag" --arg version "${tag#"$RELEASE_PREFIX"}" '
         select(.draft == false and .prerelease == false) |
-        .tag_name as $tag |
-        select($tag | type == "string" and startswith($prefix)) |
-        ($tag | ltrimstr($prefix)) as $version |
-        select($version | test($re)) |
         ("immortalwrt-swrt-c8-600-" + $version + "-mediatek-filogic-nradio_wt9106-squashfs-sysupgrade.itb") as $name |
         [.assets[] | select(.name == $name)] as $images |
         select(($images|length) == 1) |
@@ -146,7 +163,7 @@ check_image() {
     version="$(jq -r '.version' "$RELEASE")"
     [ "$name" = "immortalwrt-swrt-c8-600-$version-mediatek-filogic-nradio_wt9106-squashfs-sysupgrade.itb" ] || fail '固件名称不匹配'
     newer "$version" || fail '该固件不是更新版本，已阻止回刷'
-    expected="$(jq -er '.sha256 | select(test("^[0-9a-f]{64}$"))' "$RELEASE")" || fail '缺少有效校验值'
+    expected="$(jq -er '.sha256 | strings' "$RELEASE")" && valid_sha256 "$expected" || fail '缺少有效校验值'
     [ "$(manifest_digest)" = "$expected" ] || fail '更新清单签名无效或摘要已变化'
     if [ ! -f "$IMAGE" ] || [ -L "$IMAGE" ]; then fail '固件文件不存在'; fi
     [ "$(stat -c %s "$IMAGE")" = "$(jq -r '.size' "$RELEASE")" ] || fail '固件大小不一致'
@@ -234,7 +251,7 @@ case "$MODE" in
         trap 'exit 1' HUP INT TERM
         require_device
         require_source
-        tag="$(jq -er --arg prefix "$RELEASE_PREFIX" --arg re "$VERSION_RE" '.tag | select(startswith($prefix) and (ltrimstr($prefix) | test($re)))' "$RELEASE")"
+        tag="$(release_tag "$RELEASE" tag)" || fail '发布版本格式无效，请重新检查更新'
         fetch "$API/tags/$tag" "$DIR/api.json" || fail '无法重新确认发布信息'
         select_release "$DIR/api.json" "$DIR/release.new" || fail '发布附件已变化，请重新检查'
         jq -e --slurpfile old "$RELEASE" '.id == $old[0].id and .url == $old[0].url and

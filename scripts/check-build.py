@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.1"
+RELEASE = "SWRT-C8-600-1.2.3"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -240,16 +240,24 @@ def check_images(tree, output):
         require((rootfs / name).stat().st_mode & 0o111, f"Missing executable: {name}")
     for name in ("usr/share/swrt/ota-public.pem",
                  "www/luci-static/resources/view/system/swrt-advanced.js",
-                 "www/luci-static/resources/view/system/swrt-upgrade.js"):
+                 "www/luci-static/resources/view/system/swrt-ota.js"):
         require((rootfs / name).is_file(), f"Missing SWRT Advanced Settings asset: {name}")
     source = ROOT / "package/luci-app-swrt-advanced/root"
     for name in ("usr/libexec/swrt-upgrade", "usr/share/swrt/ota-public.pem"):
         require((rootfs / name).read_bytes() == (source / name).read_bytes(),
                 f"Installed OTA component does not match the release source: {name}")
     menu = json.loads((rootfs / "usr/share/luci/menu.d/luci-app-swrt-advanced.json").read_text())
-    require(menu.get("admin/system/swrt-uplink", {}).get("action", {}).get("path") == "system/swrt-advanced"
-            and "admin/network/swrt-uplink" not in menu,
-            "SWRT Advanced Settings must be under System")
+    require(menu["admin/system/swrt-uplink"]["action"] == {"type": "view", "path": "system/swrt-advanced"}
+            and menu["admin/system/swrt-upgrade"]["action"] == {"type": "view", "path": "system/swrt-ota"},
+            "SWRT pages must be under System")
+    legacy = menu["admin/network/swrt-uplink"]
+    require("title" not in legacy
+            and legacy["action"] == {"type": "alias", "path": "admin/system/swrt-uplink"},
+            "The legacy Advanced Settings URL must be a hidden alias to the System page")
+    upgrade_view = rootfs / "www/luci-static/resources/view/system/swrt-ota.js"
+    require("L.url('admin', 'system', 'swrt-uplink')" in upgrade_view.read_text()
+            and not upgrade_view.with_name("swrt-upgrade.js").exists(),
+            "The OTA page must load its new script and link to Advanced Settings under System")
     luci_proto = rootfs / "www/luci-static/resources/protocol/qmodem_runtime.js"
     netifd_proto = rootfs / "lib/netifd/proto/qmodem_runtime.sh"
     require(luci_proto.is_file() and "registerProtocol('qmodem_runtime'" in luci_proto.read_text()

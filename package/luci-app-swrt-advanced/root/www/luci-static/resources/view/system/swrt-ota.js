@@ -172,7 +172,7 @@ return view.extend({
             E('link', { rel: 'stylesheet', href: L.resource('swrt-upgrade.css') + '?v=1.1.0' }),
             E('div', { 'class': 'np-page-heading' }, [
                 E('h2', { 'class': 'np-page-title' }, 'SWRT 在线更新'),
-                E('a', { href: L.url('admin/system/swrt-uplink') }, '高级设置')
+                E('a', { href: L.url('admin', 'system', 'swrt-uplink') }, '高级设置')
             ]),
             E('div', { 'class': 'swrt-workspace' }, [
             E('div', { 'class': 'swrt-source-bar' }, [

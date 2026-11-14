@@ -5,10 +5,14 @@
 		"action": { "type": "view", "path": "system/swrt-advanced" },
 		"depends": { "acl": ["luci-app-swrt-advanced"] }
 	},
+	"admin/network/swrt-uplink": {
+		"action": { "type": "alias", "path": "admin/system/swrt-uplink" },
+		"depends": { "acl": ["luci-app-swrt-advanced"] }
+	},
 	"admin/system/swrt-upgrade": {
 		"title": "SWRT 在线更新",
 		"order": 84,
-		"action": { "type": "view", "path": "system/swrt-upgrade" },
+		"action": { "type": "view", "path": "system/swrt-ota" },
 		"depends": { "acl": ["luci-app-swrt-advanced"] }
 	}
 }

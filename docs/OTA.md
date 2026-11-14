@@ -1,6 +1,6 @@
 # C8-600 在线更新
 
-自 1.2.1 起，设备通过 [公开 GitHub Releases](https://github.com/SlAlot/SWRT-NRadio-C8-600/releases) 查询正式版本。打开「系统 → SWRT 在线更新」，可选 GitHub 直连或 `gh-proxy.com` 国内加速。旧版用户需先从 [安装说明](INSTALL.md) 手动升级到 1.2.1。
+设备通过 [公开 GitHub Releases](https://github.com/SlAlot/SWRT-NRadio-C8-600/releases) 查询正式版本。打开「系统 → SWRT 在线更新」，可选 GitHub 直连或 `gh-proxy.com` 国内加速。1.2.1 固件内置的 jq 缺少正则支持，无法解析发布信息。1.2.1 或更早版本用户请按照 [安装说明](INSTALL.md) 手动升级到 1.2.3。
 
 ## 更新包
 

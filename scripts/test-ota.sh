@@ -43,11 +43,22 @@ if newer 1.1.10; then exit 1; fi
 newer 1.2.1
 CURRENT=1.2.1
 if newer 1.2.1; then exit 1; fi
+newer "$version"
+CURRENT="$version"
+if newer "$version"; then exit 1; fi
 for filter in '.draft=true' '.prerelease=true' '.assets[0].name="recovery.itb"' \
-              'del(.assets[2])' '.assets[1].browser_download_url="https://other.example/ota.json"'; do
+              'del(.assets[2])' '.assets[1].browser_download_url="https://other.example/ota.json"' \
+              '.tag_name="SWRT-C8-600-1.02.3"' '.tag_name += "\n1.2.3"' '.tag_name=123'; do
     jq "$filter" "$scratch/api.json" > "$scratch/invalid.json"
     if select_release "$scratch/invalid.json" "$scratch/selected.json"; then
         echo "Unexpected OTA release accepted: $filter" >&2
+        exit 1
+    fi
+done
+test "$(release_tag "$RELEASE" tag)" = "$current_tag"
+for invalid in '' "$(printf 'a%.0s' {1..63})" "$(printf 'G%.0s' {1..64})"; do
+    if valid_sha256 "$invalid"; then
+        echo 'Malformed SHA256 passed validation' >&2
         exit 1
     fi
 done
