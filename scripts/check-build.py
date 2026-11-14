@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.5"
+RELEASE = "SWRT-C8-600-1.2.6"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -227,8 +227,8 @@ def check_images(tree, output):
             and not (rootfs / "etc/hotplug.d/iface/12-swrt-ppe").exists(),
             "Firmware must use native Firewall4 flow offload without the SWRT policy")
     wifi = (rootfs / "etc/board.d/04_defaults").read_text()
-    for expected in ('ucidef_set_country "CN"', '"2g" "SWRT-660" "none"',
-                     '"5g" "SWRT-660-5G" "none"', 'channel "1"', 'channel "149"'):
+    for expected in ('ucidef_set_country "CN"', '"2g" "SWRT-600" "none"',
+                     '"5g" "SWRT-600-5G" "none"', 'channel "1"', 'channel "149"'):
         require(expected in wifi, f"Missing wireless default: {expected}")
     require("defaults?.channel || channel" in (rootfs / "lib/wifi/mac80211.uc").read_text(),
             "Wireless generator must consume the board default channels")

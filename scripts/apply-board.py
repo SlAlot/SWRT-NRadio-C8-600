@@ -48,8 +48,8 @@ def apply_board(tree):
     wifi_entry = (
         f"{BOARD})\n"
         '\tucidef_set_country "CN"\n'
-        '\tucidef_set_wireless "2g" "SWRT-660" "none"\n'
-        '\tucidef_set_wireless "5g" "SWRT-660-5G" "none"\n'
+        '\tucidef_set_wireless "2g" "SWRT-600" "none"\n'
+        '\tucidef_set_wireless "5g" "SWRT-600-5G" "none"\n'
         '\tjson_select wlan\n'
         '\tjson_select defaults\n'
         '\tjson_select ssids\n'
