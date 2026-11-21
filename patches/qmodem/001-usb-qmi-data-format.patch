@@ -1,0 +1,221 @@
+--- a/application/quectel_CM_5G_M/Makefile
++++ b/application/quectel_CM_5G_M/Makefile
+@@ -5,7 +5,7 @@
+ include ../../version.mk
+ 
+ PKG_NAME:= quectel-CM-5G-M
+-PKG_RELEASE:=$(QMODEM_RELEASE)
++PKG_RELEASE:=2
+ PKG_VERSION:=$(QMODEM_VERSION)
+ 
+ include $(INCLUDE_DIR)/package.mk
+--- a/application/quectel_CM_5G_M/src/QMIThread.c
++++ b/application/quectel_CM_5G_M/src/QMIThread.c
+@@ -15,6 +15,7 @@
+ ******************************************************************************/
+ #include "QMIThread.h"
+ #include <inttypes.h>
++#include <net/if.h>
+ 
+ #ifndef MIN
+ #define MIN(a, b)	((a) < (b)? (a): (b))
+@@ -771,6 +772,160 @@
+ }
+ #endif
+ 
++enum {
++    WDA_LINK_ETHERNET = 1,
++    WDA_LINK_RAW_IP = 2,
++};
++
++static USHORT WdaSetPlainRawIp(PQMUX_MSG msg, void *arg) {
++    USHORT len = WdaSetDataFormat(msg, arg);
++    msg->SetDataFormatReq.UnderlyingLinkLayerProtocolTlv.Value = cpu_to_le32(WDA_LINK_RAW_IP);
++    return len;
++}
++
++/* Only accept a confirmed link protocol for the unaggregated qmi_wwan path. */
++static int wda_plain_protocol(PQCQMUX_MSG_HDR hdr) {
++    for (int type = 0x12; type <= 0x13; type++) {
++        PQMIWDS_ADMIN_SET_DATA_FORMAT_TLV tlv = (void *)GetTLV(hdr, type);
++        if (tlv && (le16_to_cpu(tlv->TLVLength) != 4 || le32_to_cpu(tlv->Value) != 0))
++            return QMI_HOST_FORMAT_ERROR;
++    }
++
++    PQMIWDS_ADMIN_SET_DATA_FORMAT_TLV protocol = (void *)GetTLV(hdr, 0x11);
++    if (protocol && le16_to_cpu(protocol->TLVLength) == 4) {
++        uint32_t value = le32_to_cpu(protocol->Value);
++        if (value == WDA_LINK_RAW_IP || value == WDA_LINK_ETHERNET)
++            return value;
++    }
++    return 0;
++}
++
++static int request_plain_usb_format(USHORT msg_type, CUSTOMQMUX build, QMAP_SETTING *settings) {
++    PQCQMIMSG response = NULL;
++    PQCQMIMSG request = ComposeQMUXMsg(QMUX_TYPE_WDS_ADMIN, msg_type, build, settings);
++    int protocol = 0;
++
++    if (request && QmiThreadSendQMITimeout(request, &response, 5000, __func__) == 0 && response) {
++        PQMUX_MSG msg = &response->MUXMsg;
++        if (!le16_to_cpu(msg->QMUXMsgHdrResp.QMUXResult) && !le16_to_cpu(msg->QMUXMsgHdrResp.QMUXError))
++            protocol = wda_plain_protocol(&msg->QMUXMsgHdr);
++    }
++    free(response);
++    return protocol;
++}
++
++static int set_host_usb_format(const char *ifname, const char *path, char mode) {
++    int sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
++    struct ifreq ifr = {0};
++    char value[2] = {mode, '\n'};
++    int result = -1;
++    int was_up;
++
++    if (sock < 0)
++        return -1;
++    no_trunc_strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
++    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0)
++        goto out;
++    was_up = ifr.ifr_flags & IFF_UP;
++    if (was_up) {
++        ifr.ifr_flags &= ~IFF_UP;
++        if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0)
++            goto out;
++    }
++
++    int fd = open(path, O_WRONLY | O_CLOEXEC);
++    if (fd >= 0) {
++        ssize_t written = write(fd, value, sizeof(value));
++        result = written == sizeof(value) ? 0 : -1;
++        if (written >= 0 && result < 0)
++            errno = EIO;
++        int saved_errno = errno;
++        close(fd);
++        errno = saved_errno;
++    }
++
++    if (was_up) {
++        int saved_errno = errno;
++        if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
++            result = -1;
++        } else {
++            ifr.ifr_flags |= IFF_UP;
++            if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0)
++                result = -1;
++            else
++                errno = saved_errno;
++        }
++    }
++out:
++    {
++        int saved_errno = errno;
++        close(sock);
++        errno = saved_errno;
++    }
++    return result;
++}
++
++static int read_host_flag(const char *path) {
++    FILE *file = fopen(path, "r");
++    if (!file)
++        return EOF;
++    int value = fgetc(file);
++    fclose(file);
++    return value;
++}
++
++static int plain_usb_qmi(PROFILE_T *profile, char *path, size_t size, char *mode) {
++    if (profile->hardware_interface != HARDWARE_USB || !qmidev_is_qmiwwan(profile->qmichannel) ||
++        strcmp(profile->driver_name, "qmi_wwan") != 0 || profile->qmap_mode ||
++        profile->qmapnet_adapter[0] || profile->enable_bridge || !profile->wda_client)
++        return 0;
++
++    snprintf(path, size, "/sys/class/net/%s/qmi/pass_through", profile->usbnet_adapter);
++    if (read_host_flag(path) == 'Y')
++        return 0;
++    snprintf(path, size, "/sys/class/net/%s/qmi/raw_ip", profile->usbnet_adapter);
++    int status = read_host_flag(path);
++    if (status != 'Y' && status != 'N')
++        return 0;
++    *mode = status;
++    return 1;
++}
++
++static int sync_usb_qmi_format(PROFILE_T *profile, const char *path, char current, QMAP_SETTING *settings) {
++    int protocol = request_plain_usb_format(QMIWDS_ADMIN_SET_DATA_FORMAT_REQ, WdaSetPlainRawIp, settings);
++    if (protocol <= 0) {
++        int reported = request_plain_usb_format(QMIWDS_ADMIN_GET_DATA_FORMAT_REQ, NULL, NULL);
++        if (reported || !protocol)
++            protocol = reported;
++    }
++
++    if (protocol <= 0) {
++        int legacy = request_plain_usb_format(QMIWDS_ADMIN_SET_DATA_FORMAT_REQ, WdaSetDataFormat, settings);
++        if (legacy || !protocol)
++            protocol = legacy;
++    }
++
++    if (protocol == QMI_HOST_FORMAT_ERROR) {
++        dbg_time("USB QMI %s: incompatible data aggregation on a non-QMAP interface", profile->usbnet_adapter);
++        return protocol;
++    }
++    if (!protocol) {
++        dbg_time("USB QMI %s: WDA format unavailable, keeping raw_ip=%c", profile->usbnet_adapter, current);
++    } else {
++        char wanted = protocol == WDA_LINK_RAW_IP ? 'Y' : 'N';
++        if (wanted != current && set_host_usb_format(profile->usbnet_adapter, path, wanted) != 0) {
++            dbg_time("USB QMI %s: cannot set raw_ip=%c: %s", profile->usbnet_adapter, wanted, strerror(errno));
++            return QMI_HOST_FORMAT_ERROR;
++        }
++        current = wanted;
++        dbg_time("USB QMI %s: WDA link protocol %s, raw_ip=%c", profile->usbnet_adapter,
++                 protocol == WDA_LINK_RAW_IP ? "raw IP" : "802.3", current);
++    }
++    profile->rawIP = current == 'Y';
++    s_9x07 = profile->rawIP;
++    return 0;
++}
++
+ static int requestSetEthMode(PROFILE_T *profile) {
+     PQCQMIMSG pRequest;
+     PQCQMIMSG pResponse = NULL;
+@@ -782,6 +937,15 @@
+     QMAP_SETTING qmap_settings = {0};
+ 
+     qmap_settings.size = sizeof(qmap_settings);
++
++    char format_path[128];
++    char host_mode;
++    if (plain_usb_qmi(profile, format_path, sizeof(format_path), &host_mode)) {
++        err = sync_usb_qmi_format(profile, format_path, host_mode, &qmap_settings);
++        if (err)
++            return err;
++        goto skip_WdaSetDataFormat;
++    }
+     
+     if (profile->generic_mhi == 1) {
+         qmap_settings.ep_type = DATA_EP_TYPE_PCIE;
+--- a/application/quectel_CM_5G_M/src/QMIThread.h
++++ b/application/quectel_CM_5G_M/src/QMIThread.h
+@@ -10,6 +10,7 @@
+ //#define CONFIG_CELLINFO
+ //#define CONFIG_COEX_WWAN_STATE
+ #define CONFIG_DEFAULT_PDP 1
++#define QMI_HOST_FORMAT_ERROR (-EPROTO)
+ //#define CONFIG_IMSI_ICCID
+ #define QUECTEL_UL_DATA_AGG
+ //#define QUECTEL_QMI_MERGE
+--- a/application/quectel_CM_5G_M/src/main.c
++++ b/application/quectel_CM_5G_M/src/main.c
+@@ -325,8 +325,8 @@
+ 
+     if (request_ops->requestSetEthMode) {
+         int format_error = request_ops->requestSetEthMode(profile);
+-        if (profile->generic_mhi && format_error) {
+-            dbg_time("generic MHI data format/endpoint setup failed: %d", format_error);
++        if (format_error == QMI_HOST_FORMAT_ERROR || (profile->generic_mhi && format_error)) {
++            dbg_time("QMI data format/endpoint setup failed: %d", format_error);
+             if (profile->qmi_ops->deinit) profile->qmi_ops->deinit();
+             main_send_event_to_qmidevice(RIL_REQUEST_QUIT);
+             goto __main_quit;

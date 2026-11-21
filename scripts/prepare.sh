@@ -81,6 +81,7 @@ rm -f package/feeds/luci/luci-app-openclash
 ./scripts/feeds install -p istore luci-app-store
 python3 "$project/scripts/apply-board.py" "$tree"
 git -C feeds/qmodem diff --exit-code
+git -C feeds/qmodem apply "$project/patches/qmodem/001-usb-qmi-data-format.patch"
 bash "$project/scripts/test-uplink.sh"
 
 cp "$project/config/c8-600.seed" .config

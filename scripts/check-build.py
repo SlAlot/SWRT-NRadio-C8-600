@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.7"
+RELEASE = "SWRT-C8-600-1.2.8"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -195,6 +195,10 @@ def check_images(tree, output):
                 "OpenClash must contain the pinned Mihomo core")
     require((rootfs / "usr/bin/quectel-CM-M").is_file() and (rootfs / "usr/bin/tom_modem").is_file(),
             "TOM dialing core or AT utility is missing from the root filesystem")
+    require(b"WDA link protocol %s, raw_ip=%c" in (rootfs / "usr/bin/quectel-CM-M").read_bytes(),
+            "The bundled QMI dialer must synchronize the USB link format")
+    require(not (rootfs / "etc/hotplug.d/net/10-swrt-qmi-format").exists(),
+            "Only the dialer may apply the negotiated USB QMI format")
     require((rootfs / "etc/swrt-release").read_text().strip() == f"SWRT_RELEASE='{RELEASE}'",
             "Missing SWRT release identifier")
     repos = (rootfs / "etc/apk/repositories.d/distfeeds.list").read_text().splitlines()
@@ -235,8 +239,7 @@ def check_images(tree, output):
     require("option port_mode 'wan'" in (rootfs / "etc/config/swrt_uplink").read_text(),
             "Fourth port must default to WAN")
     for name in ("usr/libexec/swrt-upgrade", "usr/libexec/rpcd/luci.swrt_advanced",
-                 "usr/libexec/qmodem-host-ipv4-owner", "usr/sbin/swrt-qmi-format",
-                 "etc/hotplug.d/net/10-swrt-qmi-format"):
+                 "usr/libexec/qmodem-host-ipv4-owner", "usr/sbin/swrt-qmi-format"):
         require((rootfs / name).stat().st_mode & 0o111, f"Missing executable: {name}")
     for name in ("usr/share/swrt/ota-public.pem",
                  "www/luci-static/resources/view/system/swrt-port-settings.js",

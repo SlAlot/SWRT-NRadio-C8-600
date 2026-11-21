@@ -104,7 +104,9 @@ service_triggers() {
 }''')
 
     shutil.copytree(ROOT / "files", tree / "files", dirs_exist_ok=True)
-    for name in ("etc/init.d", "etc/uci-defaults", "etc/hotplug.d/iface", "etc/hotplug.d/net", "usr/sbin", "usr/libexec"):
+    # Remove the retired initializer when preparing an existing build tree.
+    (tree / "files/etc/hotplug.d/net/10-swrt-qmi-format").unlink(missing_ok=True)
+    for name in ("etc/init.d", "etc/uci-defaults", "etc/hotplug.d/iface", "usr/sbin", "usr/libexec"):
         for script in (tree / "files" / name).iterdir():
             if script.is_file():
                 script.chmod(0o755)
