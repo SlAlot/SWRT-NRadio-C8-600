@@ -11,4 +11,4 @@
 | 网络面板 / 首页 / 主题 | 基于 SlAlot 的网络面板（wlmb-server）。来源 [wlmb-server v1.1.7](https://github.com/SlAlot/wlmb-server/tree/a4cc6650336714ff2e32350f0ea1feabb7b396ea)、[网络面板首页](https://github.com/SlAlot/luci-app-wlmbstart/tree/fce222f945d0cd0391e4591dda84126356839dd2)、[Apollo 主题](https://github.com/SlAlot/luci-theme-apollo/tree/d27d4cb94d5523ad6b351652f2e34770a0d786ff)。使用公开上游版本，许可为各自仓库的非商业条款，保留版权和第三方声明 |
 | iStore | [iStore 固定提交](https://github.com/istoreos/istore/tree/a97ace34f2da358a015b094d326bba2697697f2e)，MIT，界面与其他依赖见各自源码和许可 |
 
-`scripts/prepare.sh` 记录第三方包的构建处理和上游修改，`scripts/apply-board.py` 记录板级集成。`patches/qmodem/` 中的补丁将拨号时协商的 USB QMI 封包格式同步给 Linux 网卡。发布附件中的软件清单列出所装软件和版本。上游源与构建可通过标签下的源码归档、版本锁文件和构建脚本获取。
+`scripts/prepare.sh` 记录第三方包的构建处理和上游修改，`scripts/apply-board.py` 记录板级集成。`patches/qmodem/` 包含 USB QMI 封包协商、MBIM 地址交接和 NCM 等 USB 网卡的拨号适配。发布附件中的软件清单列出所装软件和版本。上游源与构建可通过标签下的源码归档、版本锁文件和构建脚本获取。

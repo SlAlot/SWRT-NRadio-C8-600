@@ -82,6 +82,8 @@ rm -f package/feeds/luci/luci-app-openclash
 python3 "$project/scripts/apply-board.py" "$tree"
 git -C feeds/qmodem diff --exit-code
 git -C feeds/qmodem apply "$project/patches/qmodem/001-usb-qmi-data-format.patch"
+git -C feeds/qmodem apply "$project/patches/qmodem/002-usb-host-network.patch"
+bash "$project/scripts/test-usb-modem.sh" "$tree/feeds/qmodem"
 bash "$project/scripts/test-uplink.sh"
 
 cp "$project/config/c8-600.seed" .config

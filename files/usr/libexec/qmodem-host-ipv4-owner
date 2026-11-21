@@ -4,4 +4,18 @@
 case "$1" in ''|*[!a-zA-Z0-9_]*) exit 1 ;; esac
 [ "$(uci -q get "qmodem.$1.data_interface")" = usb ] || exit 1
 netdev=$(/usr/share/qmodem/modem_netdev.sh "$1") || exit 1
-/usr/sbin/swrt-qmi-format "$netdev"
+driver=$(readlink -f "/sys/class/net/$netdev/device/driver") || exit 1
+case "${driver##*/}" in
+	cdc_mbim)
+		# The CM chooses a preconfigured VLAN by PDP number when present.
+		# The board's automatic policy owns the untagged session 0 only.
+		pdp=$(uci -q get "qmodem.$1.pdp_index")
+		case "$pdp" in
+			''|*[!0-9]*) pdp=1 ;;
+			*) while [ "${pdp#0}" != "$pdp" ] && [ "$pdp" != 0 ]; do pdp=${pdp#0}; done ;;
+		esac
+		[ ! -e "/sys/class/net/$netdev.$pdp" ]
+		;;
+	qmi_wwan) /usr/sbin/swrt-qmi-format "$netdev" ;;
+	*) exit 1 ;;
+esac

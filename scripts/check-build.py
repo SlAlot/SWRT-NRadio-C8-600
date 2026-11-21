@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.8"
+RELEASE = "SWRT-C8-600-1.2.9"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -138,9 +138,10 @@ def check_fit(fit, external):
 
 def check_images(tree, output):
     directory = tree / "bin/targets/mediatek/filogic"
-    upgrade = one(directory, f"*{PROFILE}*sysupgrade.itb")
-    recovery = one(directory, f"*{PROFILE}*recovery.itb")
-    manifest = one(directory, "*.manifest")
+    stem = f"immortalwrt-{RELEASE.lower()}-mediatek-filogic-{PROFILE}"
+    upgrade = one(directory, f"{stem}-squashfs-sysupgrade.itb")
+    recovery = one(directory, f"{stem}-initramfs-recovery.itb")
+    manifest = one(directory, f"{stem}.manifest")
     images = check_fit(upgrade, external=True)
     require(any(image.startswith("rootfs") for image in images), "Sysupgrade FIT lacks rootfs")
     check_fit(recovery, external=False)
@@ -156,6 +157,8 @@ def check_images(tree, output):
         "luci-app-openclash", "luci-theme-apollo", "luci-app-store", "luci-app-ttyd",
         "mwan3", "luci-app-mwan3", "iptables-nft", "fitblk", "dnsmasq-full", "ip-full", "busybox",
         "kmod-usb3", "kmod-usb-net-qmi-wwan", "kmod-mt7981-firmware",
+        "kmod-usb-net-cdc-mbim", "kmod-usb-net-cdc-ncm", "kmod-usb-net-huawei-cdc-ncm",
+        "kmod-usb-net-cdc-ether", "kmod-usb-net-rndis",
         "ruby", "ruby-yaml", "tom_modem", "quectel-CM-5G-M",
         "iw", "jq", "coreutils-timeout", "ubus-at-daemon", "bridger",
         "kmod-nft-offload", "kmod-mt7915e", "mt7981-wo-firmware",
