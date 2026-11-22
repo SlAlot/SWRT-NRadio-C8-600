@@ -83,7 +83,11 @@ python3 "$project/scripts/apply-board.py" "$tree"
 git -C feeds/qmodem diff --exit-code
 git -C feeds/qmodem apply "$project/patches/qmodem/001-usb-qmi-data-format.patch"
 git -C feeds/qmodem apply "$project/patches/qmodem/002-usb-host-network.patch"
+git -C feeds/qmodem apply "$project/patches/qmodem/003-usb-transport-lifecycle.patch"
+install -m 0755 "$project/qmodem/files/usr/libexec/qmodem-usb-health" \
+    feeds/qmodem/application/qmodem/files/usr/libexec/qmodem-usb-health
 bash "$project/scripts/test-usb-modem.sh" "$tree/feeds/qmodem"
+bash "$project/scripts/test-qmodem-transport.sh" "$tree/feeds/qmodem"
 bash "$project/scripts/test-uplink.sh"
 
 cp "$project/config/c8-600.seed" .config

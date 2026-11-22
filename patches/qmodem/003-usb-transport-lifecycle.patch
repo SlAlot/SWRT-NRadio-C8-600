@@ -1,0 +1,118 @@
+diff --git a/application/qmodem/Makefile b/application/qmodem/Makefile
+index 8336d0b..38446cf 100644
+--- a/application/qmodem/Makefile
++++ b/application/qmodem/Makefile
+@@ -5,7 +5,7 @@ include $(INCLUDE_DIR)/kernel.mk
+ include ../../version.mk
+ 
+ PKG_NAME:=qmodem
+-PKG_RELEASE:=2
++PKG_RELEASE:=5
+ PKG_VERSION:=$(QMODEM_VERSION)
+ 
+ include $(INCLUDE_DIR)/package.mk
+diff --git a/application/qmodem/files/etc/init.d/qmodem_init b/application/qmodem/files/etc/init.d/qmodem_init
+index 853e863..12e1eaf 100755
+--- a/application/qmodem/files/etc/init.d/qmodem_init
++++ b/application/qmodem/files/etc/init.d/qmodem_init
+@@ -8,6 +8,7 @@ USE_PROCD=1
+ start_service() {
+ 	config_load qmodem
+     _start_scand
++    _start_usb_health
+     config_foreach _mk_rundir modem-device
+     config_get block_auto_probe main block_auto_probe 0
+     config_get enable_pcie_scan main enable_pcie_scan 0
+@@ -122,6 +123,15 @@ _start_scand()
+     procd_close_instance
+ }
+ 
++_start_usb_health()
++{
++    [ -x /usr/libexec/qmodem-usb-health ] || return 0
++    procd_open_instance usb_health
++    procd_set_param command /usr/libexec/qmodem-usb-health watch
++    procd_set_param respawn 3600 5 5
++    procd_close_instance
++}
++
+ _mk_rundir()
+ {
+     modem_cfg="$1"
+diff --git a/application/qmodem/files/etc/init.d/qmodem_network b/application/qmodem/files/etc/init.d/qmodem_network
+index 9e18f93..92459a4 100755
+--- a/application/qmodem/files/etc/init.d/qmodem_network
++++ b/application/qmodem/files/etc/init.d/qmodem_network
+@@ -14,6 +14,7 @@ extra_command "reconfigure" "<modem_cfg> apply settings while respecting dial en
+ extra_command "dial" "<modem_cfg> run dial script"
+ extra_command "hang" "<modem_cfg> run hang script"
+ extra_command "redial" "<modem_cfg> stop previous dial script. run hang script. and run dial script"
++extra_command "recover_usb" "<modem_cfg> <generation> <device> <ifindex> <tx_packets> verify USB TX stall and redial"
+ extra_command "modem_status" "<modem_cfg> Check dial script status" 
+ service_triggers()
+ {
+@@ -51,14 +52,16 @@ update_modem(){
+ dial()
+ {
+     qmodem_valid_instance "$1" || return 2
++    procd_lock
+-	rc_procd _dial $1
++    rc_procd _dial "$1"
+ }
+ 
+ hang()
+ {
+     qmodem_valid_instance "$1" || return 2
++    procd_lock
+-	_hang $1
++    _hang "$1"
+ }
+ 
+ modem_status()
+ {
+@@ -73,6 +76,16 @@ redial()
+     dial "$1"
+ }
+ 
++recover_usb()
++{
++    qmodem_valid_instance "$1" || return 2
++    procd_lock
++    /usr/libexec/qmodem-usb-health claim "$@" || return $?
++    redial "$1" && return 0
++    logger -t qmodem_network "USB TX recovery redial failed for $1"
++    return 1
++}
++
+ reconfigure()
+ {
+     qmodem_valid_instance "$1" || return 2
+diff --git a/application/qmodem/files/usr/share/qmodem/modem_dial.sh b/application/qmodem/files/usr/share/qmodem/modem_dial.sh
+index af56c75..cdb09aa 100755
+--- a/application/qmodem/files/usr/share/qmodem/modem_dial.sh
++++ b/application/qmodem/files/usr/share/qmodem/modem_dial.sh
+@@ -1035,6 +1035,7 @@ flush_ip_cb()
+ }
+ 
+ dial(){
++    local usb_routed=false network4=- network6=-
+     exec 7>"$MODEM_RUNDIR/${modem_config}_dir/dial.lock"
+     flock -n 7 || return 1
+     update_config
+@@ -1067,8 +1068,15 @@ dial(){
+     [ "$proto" != dhcp ] || host_owner=netifd
+     case "$driver" in qmi|mhi|mbim) host_owner=legacy;; esac
+     [ "$managed_ipv4" != 1 ] || host_owner=netifd
++    if [ "$bridge_enabled" != 1 ] && [ "$(uci -q get "qmodem.$modem_config.data_interface")" = usb ]; then
++        usb_routed=true
++        [ "$env4" != 1 ] || network4=$interface_name
++        [ "$env6" != 1 ] || network6=$interface6_name
++    fi
+     jq -n --arg driver "$driver" --arg owner "$host_owner" --arg generation "$QMODEM_GENERATION" \
+-        '{driver:$driver,ipv4_owner:$owner,generation:$generation}' > "$MODEM_RUNDIR/${modem_config}_dir/backend.json.tmp"
++        --arg device "$modem_netcard" --arg net4 "$network4" --arg net6 "$network6" --argjson usb "$usb_routed" \
++        '{driver:$driver,ipv4_owner:$owner,generation:$generation,usb_routed:$usb,data_device:$device,network4:$net4,network6:$net6}' \
++        > "$MODEM_RUNDIR/${modem_config}_dir/backend.json.tmp"
+     mv "$MODEM_RUNDIR/${modem_config}_dir/backend.json.tmp" "$MODEM_RUNDIR/${modem_config}_dir/backend.json"
+     m_debug "dialing $modem_path driver $driver"
+     exec_pre_dial $modem_config

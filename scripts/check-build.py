@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "nradio_wt9106"
 BOARD = "nradio,wt9106"
-RELEASE = "SWRT-C8-600-1.2.9"
+RELEASE = "SWRT-C8-600-1.3.0"
+QMODEM_VERSION = "3.4.0_rc3-r5"
 OFFLINE_KMODS = {"kmod-fs-ext4", "kmod-usb-storage", "kmod-usb-storage-uas"}
 LOCAL_FEEDS = {"istore", "qmodem", "video"}
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
@@ -165,6 +166,10 @@ def check_images(tree, output):
         "luci-app-swrt-advanced", "openssl-util", "ca-bundle", "curl", "fwtool",
     }
     versions = manifest.read_text().splitlines()
+    require(f"qmodem - {QMODEM_VERSION}" in versions,
+            f"Expected QModem {QMODEM_VERSION} in the manifest")
+    require(not any("sios" in line.split(" - ", 1)[0].lower() for line in versions),
+            "Sios packages must not be included in the public image")
     for name in sorted(expected):
         require(any(re.match(rf"^{re.escape(name)}(?:\s|-[0-9])", line) for line in versions),
                 f"Missing from image manifest: {name}")
@@ -220,7 +225,14 @@ def check_images(tree, output):
             "Front-panel LED program must be executable")
     qmodem = tree / "feeds/qmodem/application/qmodem/files/etc/init.d/qmodem_network"
     require((rootfs / "etc/init.d/qmodem_network").read_bytes() == qmodem.read_bytes(),
-            "QModem dialing must use the unmodified feed script")
+            "QModem dialing must use the prepared feed script")
+    health = rootfs / "usr/libexec/qmodem-usb-health"
+    require(health.is_file() and health.stat().st_mode & 0o111
+            and health.read_bytes() == (ROOT / "qmodem/files/usr/libexec/qmodem-usb-health").read_bytes(),
+            "QModem must contain the native USB TX recovery worker")
+    require("procd_set_param command /usr/libexec/qmodem-usb-health watch"
+            in (rootfs / "etc/init.d/qmodem_init").read_text(),
+            "The QModem scanner service must supervise the USB recovery worker")
     scanner = (rootfs / "usr/bin/modem_scand").read_bytes()
     require(b"/usr/sbin/swrt-uplink\0" not in scanner,
             "QModem scanning must use the unmodified feed")
@@ -279,11 +291,15 @@ def archive_apk_repository(tree, repository, rootfs, output, kernel):
     index = json.loads((repository / "index.json").read_text())["packages"]
     require(index.get("kernel") == kernel, "Offline APK repository has the wrong kernel ABI")
     require(OFFLINE_KMODS.issubset(index), "Offline APK repository is missing optional modules")
+    packages = sorted(repository.glob("*.apk"))
+    require(not any("sios" in name.lower() for name in index)
+            and not any("sios" in file.name.lower() for file in packages),
+            "Sios packages must not be included in the public offline APK archive")
     key = tree / "public-key.pem"
     require(key.read_bytes() == (rootfs / "etc/apk/keys/public-key.pem").read_bytes(),
             "The image is missing the offline APK repository verification key")
     with tarfile.open(output / f"{RELEASE}-apk.tar.gz", "w:gz") as archive:
-        for file in sorted(repository.glob("*.apk")) + [repository / "packages.adb", key]:
+        for file in packages + [repository / "packages.adb", key]:
             archive.add(file, arcname=f"{RELEASE}-apk/{file.name}")
 
 

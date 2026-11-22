@@ -1,0 +1,151 @@
+#!/bin/sh
+# Watch kernel TX completion, not reachability. A missing counter is unsupported.
+run=${QMODEM_RUN:-/var/run/qmodem}
+sys=${QMODEM_SYSFS_ROOT:-/sys}
+uptime=${QMODEM_UPTIME:-/proc/uptime}
+service=${QMODEM_NETWORK_SERVICE:-/etc/init.d/qmodem_network}
+
+uint() { case "$1" in ''|*[!0-9]*|0?*) return 1;; esac; }
+instance_name() { case "$1" in ''|*[!A-Za-z0-9_]*) return 1;; esac; }
+monotonic_now() {
+    read -r now _ < "$uptime" || return 1
+    now=${now%%.*}
+    uint "$now"
+}
+
+# Sets sample_* for a single, non-bridged USB data netdev. The caller checks
+# the modem and netifd configuration again under procd's service lock.
+sample() {
+    local base="$1" backend driver leaf net upper carrier tab
+    [ -r "$base/generation" ] && read -r sample_generation < "$base/generation" || return 1
+    # The firmware jq is built without regex support. Use escaped TSV and
+    # validate the identifiers in the shell before constructing any paths.
+    backend=$(jq -er --arg generation "$sample_generation" '
+        select(.generation == $generation and .usb_routed == true) |
+        [.driver,.data_device,.network4,.network6] |
+        select(all(.[]; type == "string" and length > 0)) | @tsv' "$base/backend.json" 2>/dev/null) || return 1
+    tab=$(printf '\t')
+    IFS="$tab" read -r sample_protocol sample_device sample_network4 sample_network6 <<EOF
+$backend
+EOF
+    case "$sample_device" in ''|.|..|lo|-*|*[!A-Za-z0-9_.:-]*) return 1;; esac
+    [ "$sample_network4" = - ] || instance_name "$sample_network4" || return 1
+    [ "$sample_network6" = - ] || instance_name "$sample_network6" || return 1
+    [ "$sample_network4$sample_network6" != -- ] || return 1
+    net="$sys/class/net/$sample_device"
+    driver=$(readlink -f "$net/device/driver") || return 1
+    case "$sample_protocol:${driver##*/}" in
+        qmi:qmi_wwan|mbim:cdc_mbim|ncm:cdc_ncm|ncm:huawei_cdc_ncm|ecm:cdc_ether|rndis:rndis_host) ;;
+        *) return 1 ;;
+    esac
+    leaf=$(readlink -f "$net/device/subsystem") || return 1
+    [ "${leaf##*/}" = usb ] && [ ! -L "$net/master" ] || return 1
+    for upper in "$net"/upper_*; do [ ! -L "$upper" ] || return 1; done
+    [ -r "$net/carrier" ] && read -r carrier < "$net/carrier" && [ "$carrier" = 1 ] || return 1
+    [ -r "$net/ifindex" ] && read -r sample_index < "$net/ifindex" && uint "$sample_index" || return 1
+    [ -r "$net/queues/tx-0/tx_timeout" ] && read -r sample_timeouts < "$net/queues/tx-0/tx_timeout" || return 1
+    [ -r "$net/statistics/tx_packets" ] && read -r sample_tx < "$net/statistics/tx_packets" &&
+        uint "$sample_tx" && uint "$sample_timeouts"
+}
+
+read_history() {
+    [ -r "$1" ] && read -r old_generation old_device old_index old_tx old_timeouts first_hit hits last_hit observed < "$1"
+}
+
+cooldown_clear() {
+    local last
+    [ ! -r "$1/usb-recovery.last" ] || {
+        read -r last < "$1/usb-recovery.last" && uint "$last" && [ "$((now - last))" -ge 300 ]
+    }
+}
+
+watch_step() {
+    local instance="$1" base="$run/${1}_dir" history old_generation old_device old_index old_tx old_timeouts
+    local first_hit=0 hits=0 last_hit=0 observed=0 fresh=0
+    instance_name "$instance" || return 0
+    history="$base/usb-recovery.sample"
+    if ! sample "$base"; then
+        rm -f "$history"
+        return 0
+    fi
+    if read_history "$history" && [ "$old_generation" = "$sample_generation" ] &&
+        [ "$old_device" = "$sample_device" ] && [ "$old_index" = "$sample_index" ] &&
+        [ "$sample_tx" = "$old_tx" ] && [ "$sample_timeouts" -ge "$old_timeouts" ] &&
+        [ "$((now - observed))" -le 15 ] && [ "$((now - last_hit))" -le 15 ]; then
+        if [ "$sample_timeouts" -gt "$old_timeouts" ]; then
+            [ "$hits" -ne 0 ] || first_hit=$now
+            hits=$((hits + sample_timeouts - old_timeouts))
+            last_hit=$now fresh=1
+        fi
+    else
+        # The first valid sample still seeds the next delta. Old totals, USB
+        # re-enumeration and any successful transmit cannot trigger a redial.
+        first_hit=$now hits=0 last_hit=$now
+    fi
+    printf '%s\n' "$sample_generation $sample_device $sample_index $sample_tx $sample_timeouts $first_hit $hits $last_hit $now" > "$history.tmp" &&
+        mv -f "$history.tmp" "$history" || return 1
+    [ "$fresh" = 1 ] && [ "$hits" -ge 3 ] && [ "$((now - first_hit))" -ge 10 ] && cooldown_clear "$base" || return 0
+    "$service" recover_usb "$instance" "$sample_generation" "$sample_device" "$sample_index" "$sample_tx"
+}
+
+interface_guard() {
+    local interface="$1" config_device status
+    [ "$interface" != - ] || return 0
+    [ "$(uci -q get "network.$interface.modem_config")" = "$instance" ] || return 1
+    config_device=$(uci -q get "network.$interface.device") || return 1
+    if [ "$config_device" != "$sample_device" ]; then
+        [ "$sample_network4" != - ] && [ "$interface" = "$sample_network6" ] &&
+            [ "$config_device" = "@$sample_network4" ] || return 1
+    fi
+    status=$(ubus call "network.interface.$interface" status 2>/dev/null | jq -er --arg device "$sample_device" '
+        select(.autostart == true and .dynamic == false) |
+        if .up == true then select(.l3_device == $device) | "up" else "waiting" end') || return 1
+    [ "$status" != up ] || active=1
+}
+
+# Called only from qmodem_network with its procd lock held. Validate the exact
+# live generation and topology before doing anything disruptive.
+claim() {
+    local instance="$1" base="$run/${1}_dir" active=0 device_path modem_path now
+    local old_generation old_device old_index old_tx old_timeouts first_hit hits last_hit observed
+    [ "$#" -eq 5 ] && instance_name "$instance" || return 1
+    monotonic_now && read_history "$base/usb-recovery.sample" && sample "$base" || return 1
+    [ "$2 $3 $4 $5" = "$sample_generation $sample_device $sample_index $sample_tx" ] &&
+        [ "$2 $3 $4 $5" = "$old_generation $old_device $old_index $old_tx" ] &&
+        [ "$sample_timeouts" -ge "$old_timeouts" ] && [ "$last_hit" = "$observed" ] &&
+        [ "$((now - observed))" -le 15 ] && [ "$((observed - first_hit))" -ge 10 ] &&
+        [ "$hits" -ge 3 ] && cooldown_clear "$base" || return 1
+    [ "$(uci -q get "qmodem.$instance")" = modem-device ] &&
+        [ "$(uci -q get "qmodem.$instance.data_interface")" = usb ] &&
+        [ "$(uci -q get "qmodem.$instance.enable_dial")" = 1 ] &&
+        [ "$(uci -q get "qmodem.$instance.state")" != disabled ] &&
+        [ "$(uci -q get "qmodem.$instance.en_bridge")" != 1 ] &&
+        [ "$(uci -q get qmodem.main.enable_dial)" != 0 ] &&
+        [ "$(uci -q get qmodem.main.usb_tx_recovery)" != 0 ] || return 1
+    modem_path=$(uci -q get "qmodem.$instance.path") && [ -d "$modem_path" ] || return 1
+    modem_path=$(readlink -f "$modem_path") && [ "$modem_path" != / ] || return 1
+    device_path=$(readlink -f "$sys/class/net/$sample_device/device") || return 1
+    [ "${device_path%/*}" = "$modem_path" ] || return 1
+    interface_guard "$sample_network4" && interface_guard "$sample_network6" && [ "$active" = 1 ] || return 1
+    # A completion during the UCI/netifd checks is enough to cancel recovery.
+    sample "$base" && [ "$2 $3 $4 $5" = "$sample_generation $sample_device $sample_index $sample_tx" ] || return 1
+    printf '%s\n' "$now" > "$base/usb-recovery.last" || return 1
+    logger -t qmodem_usb_health "$instance $sample_device ($sample_protocol): $hits TX watchdog events without TX completion; auto-redial (ifindex $sample_index, total $sample_timeouts)" || :
+}
+
+case "${1:-}" in
+    watch)
+        while sleep 5; do
+            for base in "$run"/*_dir; do
+                [ -r "$base/backend.json" ] || continue
+                monotonic_now || continue
+                instance=${base##*/}
+                watch_step "${instance%_dir}"
+            done
+        done
+        ;;
+    claim) shift; claim "$@" ;;
+    # Load the same sampling code into the regression harness without a daemon.
+    '') ;;
+    *) exit 2 ;;
+esac
